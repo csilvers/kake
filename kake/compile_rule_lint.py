@@ -6,9 +6,10 @@ import inspect
 import re
 import sys
 
+from . import project_root
+
 from . import compile_rule
 from . import computed_inputs
-from . import project_root
 
 
 # captures "'foo' in context", "context['foo']", and
@@ -61,10 +62,12 @@ def lint_missing_used_context_keys(files_to_lint):
         return
 
     # This forces us to import all the kake compile_rules.
-    from kake import make                # @UnusedImport
+    from . import all_kake_rules
+    all_kake_rules.all_compile_rules()
 
     classes = (list(_all_subclasses(compile_rule.CompileBase)) +
-               list(_all_subclasses(computed_inputs.ComputedInputsBase)))
+               list(_all_subclasses(
+                   computed_inputs.ComputedInputsBase)))
     for cls in classes:
         class_file = cls.__module__.replace('.', '/') + '.py'
         if class_file not in relfiles_to_lint:

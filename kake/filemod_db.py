@@ -67,7 +67,7 @@ import atexit
 try:
     import cPickle
 except ImportError:
-    import pickle      # python3
+    import pickle as cPickle  # python3
 import contextlib
 import fcntl
 import os
@@ -75,6 +75,7 @@ import timeit
 import zlib
 
 from . import project_root
+
 from . import log
 
 
@@ -124,7 +125,7 @@ class InMemoryDB(object):
 
         self.filename = filename
         try:
-            with open(self.filename) as f:
+            with open(self.filename, 'rb') as f:
                 fcntl.lockf(f, fcntl.LOCK_SH)
                 self.map = self._unlocked_load_and_unpickle(f)
         except (IOError, OSError):
@@ -142,7 +143,7 @@ class InMemoryDB(object):
 
     def __iter__(self):
         """Yields (key, value) tuples."""
-        return self.map.iteritems()
+        return self.map.items()
 
     def _unlocked_load_and_unpickle(self, file_obj):
         try:
@@ -201,21 +202,22 @@ class InMemoryDB(object):
         if not self.keys_to_update:
             return
 
-        # Even though we only open for reading, we have to use mode `a`
-        # so we can acquire an exclusive lock on it.
-        with open(self.filename, 'a+') as f:
+        # We use mode `w` so we can acquire an exclusive lock on it.
+        with open(self.filename + '.lock', 'w') as lockf:
             locking_start_time = timeit.default_timer()
-            fcntl.lockf(f, fcntl.LOCK_EX)
+            fcntl.lockf(lockf, fcntl.LOCK_EX)
             locking_total_time = timeit.default_timer() - locking_start_time
 
             updating_start_time = timeit.default_timer()
-            f.seek(0)
-            updated_map = self._unlocked_load_and_unpickle(f)
-            for k in self.keys_to_update:
-                updated_map[k] = self.get(k)    # doing the updating...
+            # We open as `a+` to create the file if it doesn't already exist
+            with open(self.filename, 'a+b') as f:
+                f.seek(0)
+                updated_map = self._unlocked_load_and_unpickle(f)
+                for k in self.keys_to_update:
+                    updated_map[k] = self.get(k)    # doing the updating...
 
-            with open(self.filename + '.tmp', 'w') as tmp:
-                cPickle.dump(updated_map, tmp,
+            with open(self.filename + '.tmp', 'wb') as tmpf:
+                cPickle.dump(updated_map, tmpf,
                              protocol=cPickle.HIGHEST_PROTOCOL)
             updating_total_time = timeit.default_timer() - updating_start_time
 
@@ -304,7 +306,7 @@ def get_file_info(filename, bust_cache=False, compute_crc=False):
                 cache_key = (filename, s.st_size, s.st_mtime)
                 crc = _SIZE_AND_MTIME_TO_CRC_MAP.get(cache_key)
                 if crc is None or bust_cache:     # ah well, have to compute it
-                    with open(abspath) as f:
+                    with open(abspath, 'rb') as f:
                         crc = _compute_crc(f)
                     _SIZE_AND_MTIME_TO_CRC_MAP[cache_key] = crc
             else:
@@ -414,7 +416,7 @@ class FilemodDb(object):
             # do (common case).
             return False
 
-        for (k, v) in pruned_outfile_mtime_map.iteritems():
+        for (k, v) in pruned_outfile_mtime_map.items():
             # This means symlink_candidate has the same deps as us,
             # but those deps aren't up to date.
             # This holds because infile_map has the *current* mtimes of
@@ -543,8 +545,8 @@ class FilemodDb(object):
             retval.add(outfile_name)
         elif not file_info_equal(old_mtime_map[outfile_name],
                                  new_mtime_map[outfile_name]):
-            log.v2("%s not up to date: "
-                   "its timestamp doesn't match filemod-db", outfile_name)
+            log.v2("%s not up to date: its timestamp doesn't match filemod-db",
+                   outfile_name)
             log.v4('   -- previous data: %s, new data: %s'
                    % (old_mtime_map[outfile_name],
                       new_mtime_map[outfile_name]))
@@ -560,7 +562,7 @@ class FilemodDb(object):
                       new_mtime_map.get('//context//')))
             retval.add(outfile_name)
         else:
-            for (infile_name, new_info) in new_mtime_map.iteritems():
+            for (infile_name, new_info) in new_mtime_map.items():
                 old_info = old_mtime_map.get(infile_name)
                 if old_info is None:
                     log.v2('%s not up to date: %s not in the filemod-db',

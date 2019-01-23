@@ -34,7 +34,7 @@ main = unittest.main
 # @import lines which cause it to include the reader.
 _RECURSIVE_PY_CAT = """\
 #!/usr/bin/env python
-import os, re, sys          # @Nolint(multiple imports on one line)
+import os, re, sys
 args = [a for a in sys.argv[1:] if not a.startswith('--')]
 with open(args[1], 'w') as outfile:
     def cp(infilename):
@@ -82,6 +82,21 @@ exports.transformFileSync = function(file) {
 };
 """
 
+_FAKE_UGLIFYJS = """\
+#!/usr/bin/env node
+const fs = require("fs");
+
+// The last argument to uglify is the filename we are trying to uglify
+// We should load it and strip out comments and newlines
+const filename = process.argv[process.argv.length - 1];
+let fileContents = fs.readFileSync(filename, {encoding: "utf-8"});
+fileContents = fileContents.replace(/\\n/g, ""); // "\\n"
+fileContents = fileContents.replace(/\\/\\*[^!].*?\\*\\//g, ""); // "/* */"
+fileContents = fileContents.replace(/\\/\\/.*$/g, ""); // "//"
+
+process.stdout.write(fileContents);
+"""
+
 
 def _fake_npm_build(self, outfile_infiles_changed_context):
     """Does a fake 'build' that creates simpler versions of npm scripts."""
@@ -96,7 +111,7 @@ def _fake_npm_build(self, outfile_infiles_changed_context):
             # the global version that you might have installed on your system.
             with open(project_root.join('genfiles', 'node_modules',
                                         'handlebars', 'index.js'), 'w') as f:
-                print >>f, _FAKE_HANDLEBARS_COMPILER
+                f.write(_FAKE_HANDLEBARS_COMPILER + "\n")
             # compile_handlebars.py also has a dep on
             # handlebars/lib/handlebars.js (though the fake handlebars
             # compiler never uses it), so create a fake file to make
@@ -108,28 +123,31 @@ def _fake_npm_build(self, outfile_infiles_changed_context):
             index_file = project_root.join('genfiles', 'node_modules',
                                            'babel-core', 'index.js')
             with open(index_file, 'w') as f:
-                print >>f, _FAKE_BABELJS
+                f.write(_FAKE_BABELJS + "\n")
             with open(project_root.join('genfiles', 'node_modules',
                                         'babel-core', 'package.json'),
                       'w') as f:
-                print >>f, '{}'
+                f.write('{}' + "\n")
             continue
         with open(project_root.join(outfile_name), 'w') as f:
             if os.path.basename(outfile_name) == 'lessc':
                 # format is lessc --flags <infile> <outfile>.  We
                 # follow @import's
-                print >>f, _RECURSIVE_PY_CAT
+                f.write(_RECURSIVE_PY_CAT + "\n")
             if os.path.basename(outfile_name) == 'autoprefixer':
                 # format is autoprefixer -o <outfile> --map <infile>.  We
                 # follow @import's
-                print >>f, _FAKE_AUTOPREFIXER
-            elif os.path.basename(outfile_name) in ('cssmin', 'uglifyjs'):
+                f.write(_FAKE_AUTOPREFIXER + "\n")
+            elif os.path.basename(outfile_name) == 'uglifyjs':
+                # format is uglify [args..] -- <infile>
+                f.write(_FAKE_UGLIFYJS + "\n")
+            elif os.path.basename(outfile_name) == 'cssmin':
                 # We'll just have the compressors remove newlines and
                 # comments.  We have to run perl from a shell script so
                 # we can ignore all the args to cssmin/uglifyjs.
                 # Note that in cssmin, /*! ... */ is a directive, not a
                 # comment, so we leave it alone.
-                print >>f, '#!/bin/sh'
+                f.write('#!/bin/sh' + "\n")
                 print >>f, ('perl -e \'$_ = join("", <>);'
                             ' s,\n,,g;'              # newlines
                             ' s,/\*[^!].*?\*/,,g;'   # /* comments */
@@ -138,7 +156,7 @@ def _fake_npm_build(self, outfile_infiles_changed_context):
             else:
                 # Our script just copies from stdin/argv[1] to stdout.
                 # -p does 'cat'.  -s ignores flags (all args starting with -).
-                print >>f, '#!/usr/bin/perl -ps'
+                f.write('#!/usr/bin/perl -ps' + "\n")
         os.chmod(project_root.join(outfile_name), o0755)
 
 
@@ -170,7 +188,7 @@ handlers:
         self.mock_value(
             'kake.compile_rule._COMPILE_RULES',
             {k: v.copy()
-             for (k, v) in compile_rule._COMPILE_RULES.iteritems()})
+             for (k, v) in compile_rule._COMPILE_RULES.items()})
         self.mock_value(
             'kake.compile_rule._COMPILE_RULE_LABELS',
             compile_rule._COMPILE_RULE_LABELS.copy())
@@ -321,7 +339,7 @@ handlers:
         # patch with the mock: we can't just say patch(fn, mock) :-(
         # But if the user passed in the function as a string (e.g.:
         # 'os.getpid'), we can definitely make use of that.
-        if isinstance(fn, basestring):
+        if isinstance(fn, str):
             (module_name, fn_name) = fn.rsplit('.', 1)
             __import__(module_name)
             actual_fn = getattr(sys.modules[module_name], fn_name)
@@ -334,11 +352,14 @@ handlers:
                                         fn.__name__, fn_mock)
 
         elif isinstance(fn, (types.MethodType, types.BuiltinMethodType)):
-            if not fn.im_self:
+            bound_method = (getattr(fn, 'im_self', None) or  # python 2
+                            getattr(fn, '__self__', None))   # python 3
+
+            if not bound_method:
                 raise ValueError('Must use assertCalled with a bound method: '
                                  'foo.method(), not FooClass.method()')
             fn_mock = mock.Mock(wraps=fn)
-            patcher = mock.patch.object(fn.im_self, fn.__name__, fn_mock)
+            patcher = mock.patch.object(bound_method, fn.__name__, fn_mock)
 
         else:
             raise ValueError('Must implement assertCalled for %s' % type(fn))
@@ -352,3 +373,6 @@ handlers:
         finally:
             patcher.stop()
 
+
+if not hasattr(KakeTestBase, 'assertItemsEqual'):
+    KakeTestBase.assertItemsEqual = KakeTestBase.assertCountEqual   # python 3

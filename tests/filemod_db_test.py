@@ -3,6 +3,7 @@ from __future__ import absolute_import
 
 import os
 
+
 from kake import filemod_db
 import testutil
 
@@ -68,7 +69,8 @@ class FilemodDbBase(testutil.KakeTestBase):
 
     def _changed_files(self, outfile_name, *infile_names, **kwargs):
         kwargs.setdefault('context', 'test')
-        return filemod_db.changed_files(outfile_name, *infile_names, **kwargs)
+        return filemod_db.changed_files(
+            outfile_name, *infile_names, **kwargs)
 
     def _add_to_db(self, outfile_name, *infile_names, **kwargs):
         """Adds info about outfile_name and infile_names to filemod-db."""
@@ -256,8 +258,9 @@ class FilemodDbTest(FilemodDbBase):
         self._add_to_db('o1', 'i2', 'i3')
 
         self.assertEqual(set(['o_link']),
-                         filemod_db.changed_files('o_link', 'i2', 'i3',
-                                                  context='test'))
+                         filemod_db.changed_files(
+                             'o_link', 'i2', 'i3',
+                             context='test'))
         os.symlink('o1', self._abspath('o_link'))
         self.assertTrue(os.path.islink(self._abspath('o_link')))
         self.assertTrue(os.path.samefile(self._abspath('o1'),
@@ -277,7 +280,8 @@ class FilemodDbTest(FilemodDbBase):
         self._add_to_db('o1', 'i1')
         actual = self._changed_files('o1', 'i1')
         self.assertEqual(set(), actual)
-        self.assertRaises(KeyError, filemod_db.set_up_to_date, 'o1')
+        self.assertRaises(KeyError,
+                          filemod_db.set_up_to_date, 'o1')
 
     def test_force_flag_present(self):
         # When we call changed_files with force=True, and it says
@@ -340,15 +344,15 @@ class FilemodDbTest(FilemodDbBase):
         with open(self._abspath('bc'), 'w') as f:
             f.write('2 words')
         file_info_1 = filemod_db.get_file_info('bc',
-                                               bust_cache=True,
-                                               compute_crc=True)
+                                                              bust_cache=True,
+                                                              compute_crc=True)
         self.assertNotEqual(None, file_info_1[0])
 
         with open(self._abspath('bc'), 'w') as f:
             f.write('3 words')
         file_info_2 = filemod_db.get_file_info('bc',
-                                               bust_cache=True,
-                                               compute_crc=True)
+                                                              bust_cache=True,
+                                                              compute_crc=True)
         self.assertNotEqual(file_info_1, file_info_2)
 
     def test_context(self):
@@ -366,10 +370,12 @@ class FilemodDbTest(FilemodDbBase):
 class FilemodClassTest(FilemodDbBase):
     def setUp(self):
         super(FilemodClassTest, self).setUp()
-        self.db1 = filemod_db.FilemodDb(os.path.join(self.tmpdir, 'genfiles',
-                                                     'db1.pickle'))
-        self.db2 = filemod_db.FilemodDb(os.path.join(self.tmpdir, 'genfiles',
-                                                     'db2.pickle'))
+        self.db1 = filemod_db.FilemodDb(
+            os.path.join(self.tmpdir, 'genfiles',
+                         'db1.pickle'))
+        self.db2 = filemod_db.FilemodDb(
+            os.path.join(self.tmpdir, 'genfiles',
+                         'db2.pickle'))
 
     def tearDown(self):
         # Force the db update to happen *before* the rmtree
@@ -415,11 +421,14 @@ class FilemodClassTest(FilemodDbBase):
 
 class ResolveSymlinksTest(FilemodDbBase):
     def test_resolve_symlinks(self):
-        self.assertEqual('i1', filemod_db._resolve_symlinks('l1'))
-        self.assertEqual('i1', filemod_db._resolve_symlinks('l11'))
+        self.assertEqual('i1',
+                         filemod_db._resolve_symlinks('l1'))
+        self.assertEqual('i1',
+                         filemod_db._resolve_symlinks('l11'))
 
     def test_not_a_symlinks(self):
-        self.assertEqual('i1', filemod_db._resolve_symlinks('i1'))
+        self.assertEqual('i1',
+                         filemod_db._resolve_symlinks('i1'))
 
     def test_symlink_in_a_directory_component(self):
         self.assertEqual(
@@ -463,51 +472,60 @@ class CanSymlinkToTest(FilemodDbBase):
     def test_same_input(self):
         self._add_to_db('o1', 'i1', 'i2')
         # Start the update-transaction, as needed to call can_symlink_to().
-        filemod_db.changed_files('o2', 'i1', 'i2', context='test')
+        filemod_db.changed_files('o2', 'i1', 'i2',
+                                                context='test')
         self.assertTrue(filemod_db.can_symlink_to('o2', 'o1'))
 
     def test_different_input(self):
         self._add_to_db('o1', 'i1', 'i2', 'i3')
-        filemod_db.changed_files('o2', 'i1', 'i2', context='test')
+        filemod_db.changed_files('o2', 'i1', 'i2',
+                                                context='test')
         self.assertFalse(filemod_db.can_symlink_to('o2', 'o1'))
 
     def test_infile_is_symlink(self):
         self._add_to_db('o1', 'l1', 'l22')
-        filemod_db.changed_files('o2', 'i1', 'i2', context='test')
+        filemod_db.changed_files('o2', 'i1', 'i2',
+                                                context='test')
         self.assertTrue(filemod_db.can_symlink_to('o2', 'o1'))
 
     def test_symlink_to_self(self):
         self._add_to_db('o2', 'i1', 'i2')
         # We need to do this to force changed_files to return False.
         self._change_mtime('i1')
-        filemod_db.changed_files('o2', 'i1', 'i2', context='test')
+        filemod_db.changed_files('o2', 'i1', 'i2',
+                                                context='test')
         self.assertFalse(filemod_db.can_symlink_to('o2', 'o2'))
 
     def test_outfile_has_changed(self):
         self._add_to_db('o1', 'i1', 'i2')
-        filemod_db.changed_files('o2', 'i1', 'i2', context='test')
+        filemod_db.changed_files('o2', 'i1', 'i2',
+                                                context='test')
         self._change_mtime('o1')
         self.assertFalse(filemod_db.can_symlink_to('o2', 'o1'))
 
     def test_infile_has_changed(self):
         self._add_to_db('o1', 'i1', 'i2')
         self._change_mtime('i1')
-        filemod_db.changed_files('o2', 'i1', 'i2', context='test')
+        filemod_db.changed_files('o2', 'i1', 'i2',
+                                                context='test')
         self.assertFalse(filemod_db.can_symlink_to('o2', 'o1'))
 
     def test_symlink_candidate_is_in_transaction(self):
         self._add_to_db('o1', 'i1', 'i2')
-        filemod_db.changed_files('o2', 'i1', 'i2', context='test')
+        filemod_db.changed_files('o2', 'i1', 'i2',
+                                                context='test')
         self._change_mtime('o1')
-        self.assertEqual(set(['o1']),
-                         filemod_db.changed_files('o1', 'i1', 'i2'))
+        self.assertEqual(
+            set(['o1']),
+            filemod_db.changed_files('o1', 'i1', 'i2'))
         self.assertFalse(filemod_db.can_symlink_to('o2', 'o1'))
 
     def test_symlinks_differ_in_whether_they_compute_crc(self):
         self._add_to_db('o1', 'i1', 'i2')
         # Start the update-transaction, as needed to call can_symlink_to().
-        filemod_db.changed_files('o2', 'i1', 'i2', context='test',
-                                 compute_crc=True)
+        filemod_db.changed_files('o2', 'i1', 'i2',
+                                                context='test',
+                                                compute_crc=True)
         self.assertTrue(filemod_db.can_symlink_to('o2', 'o1'))
 
 
@@ -515,7 +533,7 @@ class UpdateIfNeededTest(FilemodDbBase):
     def _maybe_update(self, outfile_name, infile_names, **kwargs):
         kwargs.setdefault('context', 'test')
         with filemod_db.needs_update(outfile_name, infile_names,
-                                     **kwargs) as c:
+                                                    **kwargs) as c:
             if c:
                 with open(self._abspath(outfile_name), 'w') as f:
                     f.write('updated!')

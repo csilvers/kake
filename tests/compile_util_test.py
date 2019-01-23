@@ -3,6 +3,7 @@ from __future__ import absolute_import
 
 import os
 
+
 from kake import compile_util
 import testutil
 
@@ -10,7 +11,9 @@ import testutil
 class TestExtendedFnmatchCompile(testutil.KakeTestBase):
     def _test(self, expected, pattern):
         self.assertEqual(
-            expected, compile_util._extended_fnmatch_compile(pattern).pattern)
+            expected,
+            compile_util._extended_fnmatch_compile(
+                pattern).pattern)
 
     def test_glob_patterns(self):
         self._test(r'hello[^/]*.world$', 'hello*?world')
@@ -65,7 +68,8 @@ class TestResolvePatterns(testutil.KakeTestBase):
         # extended_glob() requires everything to be absolute, so convert.
         self.assertItemsEqual(
             expected,
-            compile_util.resolve_patterns([glob_pattern], var_values))
+            compile_util.resolve_patterns(
+                [glob_pattern], var_values))
 
     def test_normal_glob(self):
         self._test(['a.txt'], '*.txt')

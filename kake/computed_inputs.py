@@ -1,5 +1,3 @@
-# TODO(colin): fix these lint errors (http://pep8.readthedocs.io/en/release-1.7.x/intro.html#error-codes)
-# pep8-disable:E124,E127
 """Base class and useful usable-classes for managing computed inputs.
 
 Computed inputs are an advanced feature used with complex compile
@@ -51,11 +49,18 @@ from __future__ import absolute_import
 
 import os
 import re
+import sys
+
+try:
+    from sys import intern
+except ImportError:  # python2
+    pass
+
+from . import project_root
 
 from . import compile_util
 from . import filemod_db
 from . import log
-from . import project_root
 
 
 # A pseudo-value for the trigger saying: whenever any of the current
@@ -85,9 +90,9 @@ def _unique_extend(list1, list2):
 class ComputedInputsBase(object):
     """A class you can subclass for rules that have complex dependencies.
 
-    As compile_util.__doc__ explains, some compile rules have dependencies
-    (input_patterns) that cannot be described by a simple static list.
-    For such cases, you can do
+    As compile_util.__doc__ explains, some compile
+    rules have dependencies (input_patterns) that cannot be described
+    by a simple static list. For such cases, you can do
         CompileRule(..., input_patterns=ComputedFooInputs([trigger, ...]))  OR
         register_compile(..., ComputedFooInputs([trigger, ...]))
     instead.  'trigger' is a file-pattern (a glob pattern with {var}
@@ -103,6 +108,7 @@ class ComputedInputsBase(object):
     Note that using ComputedInputsBase for a rule will cause the
     creation of a file called <outfile>.deps, in the same directory
     as <outfile>.  This is like a '.d' file for 'make'.
+
     """
     def __init__(self, triggers, compute_crc=False):
         """triggers: list of file-patterns.  If any changes, we recompute.
@@ -118,7 +124,7 @@ class ComputedInputsBase(object):
         have been to add or remove an #include line.
         """
         assert triggers, 'ComputedInputs needs at least one trigger-pattern'
-        assert not isinstance(triggers, basestring), (
+        assert not isinstance(triggers, str), (
             'ComputeInputs takes a list of triggers, not a single trigger')
         self.triggers = triggers
         self.compute_crc = compute_crc
@@ -190,7 +196,8 @@ class ComputedInputsBase(object):
         if self.triggers is FORCE:
             return []
 
-        retval = compile_util.resolve_patterns(self.triggers, context)
+        retval = compile_util.resolve_patterns(self.triggers,
+                                                              context)
         if CURRENT_INPUTS in retval:
             retval.remove(CURRENT_INPUTS)
             _unique_extend(retval, self._current_input_patterns(outfile_name))
@@ -274,8 +281,9 @@ class ComputedInputsBase(object):
         # the database to match the new current inputs.
         if changed and CURRENT_INPUTS in self.triggers:
             new_trigger_files = self.trigger_files(outfile_name, context)
-            with filemod_db.needs_update(depsfile, new_trigger_files,
-                                         self.full_version(context)):
+            with filemod_db.needs_update(
+                    depsfile, new_trigger_files,
+                    self.full_version(context)):
                 # We just needed to create the updated db entry; the
                 # depsfile is already correct.
                 pass
@@ -374,11 +382,21 @@ class ComputedIncludeInputs(ComputedInputsBase):
         # be alleviated by a mechanism similar to
         # compile_rule.used_context_keys. Generally, resolving dependencies
         # is fast though, so I'm not sure it's worth it to be that aggressive.
-        return '%(infile)s?%(context)s' % {
-            'infile': infile,
-            'context': '&'.join('%s=%s' % (k, v)
-                                for k, v in sorted(context.iteritems()))
-        }
+
+        # We need to key on the infile and the context.  In many cases, the
+        # context was also the same context used to build other files (since
+        # much of it gets passed down through the dependency-tree).
+        # Furthermore, in the case of test-file bundles, it can be extremely
+        # large (a list of all the test files in the bundle).  So we intern the
+        # context. There is no need to intern the infile, and it varies, so we
+        # keep it as a separate string.  This saves as much as 1GB of memory
+        # when building test bundles.
+        context_string = '&'.join('%s=%s' % (k, v)
+                                  for k, v in sorted(context.items()))
+        if not isinstance(context_string, str):
+            # We can only intern strings, not unicode.
+            context_string = context_string.encode('utf-8')
+        return (infile, intern(context_string))
 
     def _get_contents_for_analysis(self, infile):
         """Return contents for the provided infile to be used for analysis.
@@ -412,12 +430,13 @@ class ComputedIncludeInputs(ComputedInputsBase):
         if cache_key not in self._include_cache:
             should_update_cache = True
             cur_file_info = filemod_db.get_file_info(
-                    infile, compute_crc=self.compute_crc)
+                infile, compute_crc=self.compute_crc)
         else:
             cached_file_info = self._include_cache[cache_key][1]
             cur_file_info = filemod_db.get_file_info(
-                    infile, compute_crc=self.compute_crc)
-            if not filemod_db.file_info_equal(cached_file_info, cur_file_info):
+                infile, compute_crc=self.compute_crc)
+            if not filemod_db.file_info_equal(
+                    cached_file_info, cur_file_info):
                 should_update_cache = True
 
         if should_update_cache:
@@ -425,13 +444,13 @@ class ComputedIncludeInputs(ComputedInputsBase):
 
             contents = self._get_contents_for_analysis(infile)
 
-            retval = []
+            retval = set()
             for m in self.include_regexp.finditer(contents):
                 newfile = m.group(1)
                 abs_newfile = self.resolve_includee_path(abs_infile, newfile,
                                                          context)
-                retval.append(project_root.relpath(abs_newfile))
-            self._include_cache[cache_key] = (retval, cur_file_info)
+                retval.add(project_root.relpath(abs_newfile))
+            self._include_cache[cache_key] = (list(retval), cur_file_info)
 
         log.v2('includes for %s: %s',
                infile, self._include_cache[cache_key][0])
@@ -478,9 +497,9 @@ class ComputedIncludeInputs(ComputedInputsBase):
              # This is because of a bugfix I made to this
              # class itself.  See version.__doc__ for why
              # I can't put this version info there.
-             '2',
+             '3',
              str(self.version()),
-         ])
+             ])
 
     def trigger_files(self, outfile_name, context):
         # We override trigger_files since we need it to be more
@@ -488,20 +507,20 @@ class ComputedIncludeInputs(ComputedInputsBase):
         # from base_file_pattern, but not other_inputs.
 
         # Start with the base-file and then add from there.
-        retval = compile_util.resolve_patterns([self.base_file_pattern],
-                                               context)
+        retval = compile_util.resolve_patterns(
+            [self.base_file_pattern], context)
         i = 0
         while i < len(retval):
             # We yield here to let the build system build this trigger file,
             # if necessary
             yield retval[i]
             _unique_extend(retval, self.included_files(retval[i],
-                                                        context))
+                                                       context))
             i += 1
 
     def input_patterns(self, outfile_name, context, triggers, changed):
         # Our inputs and our trigger files are the same, except
         # our inputs also include other_inputs.
-        retval = list(self.trigger_files(outfile_name, context))
+        retval = sorted(self.trigger_files(outfile_name, context))
         _unique_extend(retval, self.other_inputs)
         return retval

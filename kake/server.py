@@ -194,7 +194,7 @@ def serve_genfile(filename):
     abspath = project_root.join('genfiles', filename)
 
     # This converts a werkzeug MultiDict to a normal dict.
-    context = dict((k, v) for (k, v) in flask.request.args.iteritems()
+    context = dict((k, v) for (k, v) in flask.request.args.items()
                    if not k.startswith('_'))
     force = flask.request.args.get('_force', False)
 

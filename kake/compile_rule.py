@@ -68,9 +68,10 @@ import re
 import subprocess
 import sys
 
+from . import project_root
+
 from . import compile_util
 from . import log
-from . import project_root
 
 
 # Subdirectory of ka-root that holds generated files.  All other
@@ -91,7 +92,7 @@ class GracefulCompileFailure(CompileFailure):
     500'ing on the JS request.
 
     Because this subclasses CompileFailure, when compiling from
-    kake/build_prod_main.py, this will act like a regular CompileFailure.
+    build/kake/build_prod_main.py, this will act like a regular CompileFailure.
     """
     def __init__(self, message, graceful_response):
         super(GracefulCompileFailure, self).__init__(message)
@@ -354,9 +355,10 @@ class CompileRule(object):
         if not self._has_computed_inputs():
             for ip in self.input_patterns:
                 if ip.startswith(GENDIR):
-                    assert not compile_util.has_glob_metachar(ip), (
-                        '%s: We do not support globbing over generated files'
-                        % ip)
+                    assert not (
+                        compile_util.has_glob_metachar(ip)), (
+                            '%s: We do not support globbing over '
+                            'generated files' % ip)
 
     def matches(self, output_filename):
         """True if filename could be produced by this output rule."""
@@ -380,7 +382,7 @@ class CompileRule(object):
         # want {'{{var}}': 'value'}.
         var_values = m.groupdict()
         retval = {}
-        for (k, v) in var_values.iteritems():
+        for (k, v) in var_values.items():
             if k.startswith('bracebrace_'):
                 retval['{{%s}}' % k[len('bracebrace_'):]] = v
             else:
@@ -430,8 +432,9 @@ class CompileRule(object):
         if var_values is None:
             var_values = self.var_values(output_filename)
 
-        return compile_util.resolve_patterns(self.non_input_deps_patterns,
-                                             var_values)
+        return compile_util.resolve_patterns(
+            self.non_input_deps_patterns,
+            var_values)
 
     def maybe_symlink_to(self, output_filename, var_values=None):
         """Return the maybe-symlink-to file for output_filename, or None.
@@ -446,8 +449,9 @@ class CompileRule(object):
         if var_values is None:
             var_values = self.var_values(output_filename)
 
-        retval = compile_util.resolve_patterns([self.maybe_symlink_to_pattern],
-                                               var_values)
+        retval = compile_util.resolve_patterns(
+            [self.maybe_symlink_to_pattern],
+            var_values)
 
         # Make sure that the pattern resolves to a single file, not a
         # list (which it could if it contained a glob pattern like '*').
@@ -502,8 +506,8 @@ def find_compile_rule(filename):
     # register_compile will miss outfiles like 'genfiles/{foo}'
     # where 'foo' starts with an underscore.
     assert not filename.startswith(GENDIR + '_'), (
-        'Output files in the top-level %s directory cannot start with _. '
-        'Use a subdirectory instead.' % GENDIR)
+        '%s: Output files in the top-level %s directory cannot start with _. '
+        'Use a subdirectory instead.' % (filename, GENDIR))
 
     # _COMPILE_RULES is bucketed by the second dir (after genfiles/).
     second_dir = filename.split('/', 2)[1]
@@ -656,7 +660,8 @@ def register_compile(label, output_pattern, input_patterns, compile_instance,
     # we partition the compile-rules by the directory after 'genfiles/',
     # which is almost always a constant string.
     second_dir = output_pattern.split('/', 2)[1]
-    if compile_util.has_glob_metachar(second_dir) or '{' in second_dir:
+    if (compile_util.has_glob_metachar(second_dir)
+            or '{' in second_dir):
         # 'catch-all' location for when the second-dir *isn't* a constant.
         second_dir = None
 

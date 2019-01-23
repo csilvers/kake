@@ -34,6 +34,6 @@ class CreateSymlink(compile_rule.CompileBase):
 
     def build(self, outfile_name, infile_names, _, context):
         assert len(infile_names) == 1, (
-                "Can only symlink to one file, got %r" % infile_names)
+            "Can only symlink to one file, got %r" % infile_names)
 
         symlink(self.abspath(infile_names[0]), self.abspath(outfile_name))

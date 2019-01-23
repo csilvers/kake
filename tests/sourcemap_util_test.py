@@ -1,8 +1,8 @@
 """Tests for sourcemap_util.py."""
-
 from __future__ import absolute_import
 
 import json
+
 
 from kake import sourcemap_util
 import testutil
@@ -15,12 +15,14 @@ class TestIdentitySourcemap(testutil.KakeTestBase):
         self.assertEqual('AAAA', sm['mappings'])
 
     def test_num_lines_hanging_line(self):
-        sm = sourcemap_util._identity_sourcemap('foo', 'aaa\nbbb')
+        sm = sourcemap_util._identity_sourcemap('foo',
+                                                               'aaa\nbbb')
         self.assertEqual('foo', sm['file'])
         self.assertEqual('AAAA;AACA', sm['mappings'])
 
     def test_num_lines_many_newlines(self):
-        sm = sourcemap_util._identity_sourcemap('foo', 'aaa\n\n')
+        sm = sourcemap_util._identity_sourcemap('foo',
+                                                               'aaa\n\n')
         self.assertEqual('foo', sm['file'])
         self.assertEqual('AAAA;AACA', sm['mappings'])
 
@@ -62,8 +64,8 @@ class TestIndexSourcemap(testutil.KakeTestBase):
                                  "sources": ["i2"],
                                  "names": [],
                                  "mappings": "AAAA"},
-                         },
-                        ]}
+                         }
+                    ]}
         self.assertDictEqual(expected, sm.sourcemap)
 
     def test_simple_offsets(self):
@@ -145,7 +147,7 @@ class TestIndexSourcemap(testutil.KakeTestBase):
         sm.add_section('i1', 'This is i1\n')
         sm.add_section('i2', 'This is i2\n')
         with open(self._abspath('sub.map'), 'w') as f:
-            print >>f, sm.to_json()
+            f.write(sm.to_json() + "\n")
 
         sm = sourcemap_util.IndexSourcemap('bar.out')
         sm.add_section('i3', 'This is i3\n')
@@ -181,7 +183,7 @@ class TestIndexSourcemap(testutil.KakeTestBase):
                                                ]},
                           'offset': {'column': 0, 'line': 1}},
                          ],
-            }
+        }
         self.assertEqual(expected, sm.sourcemap)
 
     def test_to_json(self):
@@ -207,7 +209,7 @@ class TestIndexSourcemap(testutil.KakeTestBase):
                                             "names": [],
                                             "mappings": "AAAA"},
                                     }
-                                   ]},
+                               ]},
                               indent=2, sort_keys=True)
         self.assertEqual(expected, sm.to_json())
 

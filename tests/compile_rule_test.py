@@ -1,15 +1,17 @@
-"""While most of compile_rule is tested in build_test, some tests are here.
+"""While most of compile_rule is tested in build_test,
+some tests are here.
 
 Basically, tests that test whether we can actually create a
 compile-rule or not -- independent of what it actually does -- are
 tested here.
+
 """
 
 from __future__ import absolute_import
 
-import kake.build
 from kake import compile_rule
 import testutil
+import kake.make
 
 
 class CopyCompile(compile_rule.CompileBase):
@@ -61,7 +63,7 @@ class CompileRuleTest(testutil.KakeTestBase):
             CopyCompile())
 
         with self.assertRaises(AssertionError):
-            kake.build.build('genfiles/_bad_underscore')
+            kake.make.build('genfiles/_bad_underscore')
 
 
 if __name__ == '__main__':

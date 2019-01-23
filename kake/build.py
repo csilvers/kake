@@ -2,15 +2,29 @@ from __future__ import absolute_import
 
 import fcntl
 import itertools
-import multiprocessing
 import os
+import multiprocessing
 import resource
+import select
+import sys
 import time
+
+try:
+    from sys import intern
+except ImportError:  # python2
+    pass
+
+try:
+    # We'll use psutil to log memory usage if possible, but it's not required.
+    import psutil
+except Exception:
+    psutil = None
+
+from . import project_root
 
 from . import compile_rule
 from . import filemod_db
 from . import log
-from . import project_root
 
 
 # for convenience:
@@ -54,7 +68,7 @@ class DependencyNode(object):
         maybe_intern = lambda s: intern(s) if isinstance(s, str) else s
 
         self.compile_rule = compile_rule
-        self.context = {maybe_intern(k): v for (k, v) in context.iteritems()}
+        self.context = {maybe_intern(k): v for (k, v) in context.items()}
         self.input_files = [maybe_intern(f) for f in input_files]
         self.non_input_deps = non_input_deps
         self.level = None
@@ -80,9 +94,9 @@ class DependencyGraph(object):
         """The DependencyNode for this filename, or None if not found."""
         return self.deps.get(output_filename, None)
 
-    def iteritems(self):
+    def items(self):
         """Return a iterator over (output_filename, dependency_node) pairs."""
-        return self.deps.iteritems()
+        return self.deps.items()
 
     def items(self):
         """Return a list of all (output_filename, dependency_node) pairs."""
@@ -178,7 +192,9 @@ class DependencyGraph(object):
 
         # We create a new context here instead of updating the existing
         # one to avoid modifying the caller's context.
-        outfile_context = context.copy()
+        context = context.copy()
+        context['_input_map'] = {}   # will update later
+        outfile_context = context
         outfile_context.update(var_values)
 
         # If we have inputs that are computed at runtime, make sure that
@@ -191,7 +207,8 @@ class DependencyGraph(object):
         # return a generator.
         for trigger_file in cr.input_trigger_files(output_filename,
                                                    outfile_context):
-            _immediate_build([trigger_file], context, output_filename,
+            _immediate_build([trigger_file], context,
+                             output_filename + ' (via computed dep)',
                              already_built, timing_map, force)
 
         # Next, figure out what our dependencies are.  We have two types
@@ -238,6 +255,7 @@ class DependencyGraph(object):
         # levels, plus one.
         max_dep_level = 0
         for dep in deps:
+            dep = os.path.normpath(dep)   # the compile-rule might not do so
             log.v4('Marking that %s depends on %s', output_filename, dep)
             dep_level = self.add_file(dep, context, already_built, timing_map,
                                       force, include_static_files)
@@ -266,19 +284,19 @@ class DependencyGraph(object):
         """
         # For every file, collect the rule that built it (by label).
         file_rules = {}
-        for (output_filename, dependency_node) in self.iteritems():
+        for (output_filename, dependency_node) in self.items():
             file_rules[output_filename] = dependency_node.compile_rule.label
         # We'll mark the terminal rules (those that are not an input to
         # another rule) specially.  We start by including all rules, then
         # marking them out as they're shown to be non-terminal.
-        terminal_rules = set(r for r in file_rules.itervalues())
+        terminal_rules = set(r for r in file_rules.values())
 
         rule_graph = {}
         # Now, the rule_graph is a list of edges, where rule X points to
         # rule Y if file Y is built via rule Y, and file Y has as an input
         # file X, which is built via rule X.  We weight each edge by how
         # many times we see that edge.
-        for (output_filename, dependency_node) in self.iteritems():
+        for (output_filename, dependency_node) in self.items():
             output_rule = file_rules[output_filename]
             for input_filename in dependency_node.input_files:
                 input_rule = file_rules.get(input_filename)
@@ -288,21 +306,40 @@ class DependencyGraph(object):
                     terminal_rules.discard(input_rule)   # not terminal!
 
         with open(project_root.join(outfile_name), 'w') as f:
-            print >>f, '// TO VIEW THIS: install "dot" and run'
-            print >>f, ('//   dot -Tpdf %s > /tmp/rule_deps.pdf'
-                        % outfile_name)
-            print >>f
-            print >>f, 'digraph ruledeps {'
-            for ((input_rule, output_rule), count) in rule_graph.iteritems():
-                print >>f, ('    "%s" -> "%s" [label="%s" weight=%s];'
-                            % (input_rule, output_rule, count, count))
-            print >>f
-            print >>f, '    { rank=same;'
+            f.write('// TO VIEW THIS: install "dot" and run' + "\n")
+            f.write('//   dot -Tpdf %s > /tmp/rule_deps.pdf\n' % outfile_name)
+            f.write("\n")
+            f.write('digraph ruledeps {' + "\n")
+            for ((input_rule, output_rule), count) in rule_graph.items():
+                f.write('    "%s" -> "%s" [label="%s" weight=%s];\n'
+                        % (input_rule, output_rule, count, count))
+            f.write("\n")
+            f.write('    { rank=same;' + "\n")
             for rule in terminal_rules:
-                print >> f, '     "%s" [shape=box];' % rule
-            print >>f, '    }'
-            print >>f, '}'
+                 f.write('     "%s" [shape=box];' % rule + "\n")
+            f.write('    }' + "\n")
+            f.write('}' + "\n")
         log.v1('WROTE dependency graph to %s' % outfile_name)
+
+
+def _path_to(fname, input_map):
+    """Given a graph of output-file to its input-files, return a chain.
+
+    The idea is to be able to see why a given file is being built.  Of
+    course, a file might be needed for more than one reason; this just
+    returns one of them arbitrarily.
+    """
+    reversed_map = {}
+    for (outfile, infiles) in input_map.items():
+        for infile in infiles:
+            # It's possible that many outfiles need this infile as
+            # input, we just pick one arbitrarily.
+            reversed_map[infile] = outfile
+
+    path = [fname]
+    while path[-1] in reversed_map:
+        path.append(reversed_map[path[-1]])
+    return ' -> '.join(reversed(path))
 
 
 def _deps_to_compile_together(dependency_graph):
@@ -313,8 +350,8 @@ def _deps_to_compile_together(dependency_graph):
     compile_instance.  The caller is still responsible for divvying up
     chunks based on compile_rule.num_outputs().
     """
-    flattened_graph = dependency_graph.items()
-    keyfn = lambda kv: (kv[1].level, kv[1].compile_rule.compile_instance)
+    flattened_graph = list(dependency_graph.items())
+    keyfn = lambda kv: (kv[1].level, id(kv[1].compile_rule.compile_instance))
     flattened_graph.sort(key=keyfn)
     for (_, chunk) in itertools.groupby(flattened_graph, keyfn):
         yield list(chunk)
@@ -387,8 +424,10 @@ def _subprocess_run_build(buildmany_arg):
                     try:
                         compile_instance.build_many([build_only_one])
                     except Exception:
-                        log.exception('FATAL ERROR building %s',
-                                      build_only_one[0])
+                        (outfile, _, _, context) = build_only_one
+                        log.exception(
+                            'FATAL ERROR building %s (needed via %s)',
+                            outfile, _path_to(outfile, context['_input_map']))
                         filemod_db.abandon_pending_transactions()
                         raise
                 log.error('Could not narrow down the problematic target rule')
@@ -399,7 +438,10 @@ def _subprocess_run_build(buildmany_arg):
             try:
                 compile_instance.build(*build_only_one)   # the 4-tuple
             except Exception:
-                log.exception('FATAL ERROR building %s', build_only_one[0])
+                (outfile, _, _, context) = build_only_one
+                log.exception(
+                    'FATAL ERROR building %s (needed via %s)',
+                    outfile, _path_to(outfile, context['_input_map']))
                 filemod_db.abandon_pending_transactions()
                 raise
         end_time = time.time()
@@ -517,13 +559,20 @@ def _compile_together(outfile_names_and_deprules, pool, num_processes,
         descriptor_limit = 1024
         log.warn('Could not find ulimit: %s. Using default of %d.',
                  why, descriptor_limit)
+
+    # If we're on a system (like macOS) that uses select() instead of poll(),
+    # then the file descriptor < 1024 limit of select() may be a stricter
+    # limit than the number of open files we're allowed to have:
+    if sys.platform != "win32" and not hasattr(select, "poll"):
+        descriptor_limit = min(descriptor_limit, 1024)
+
     max_chunk_size = max(descriptor_limit - 200, descriptor_limit / 2)
 
     partitions_of_build_args = []
     if hasattr(compile_instance, 'split_outputs'):
         for one_partition in compile_instance.split_outputs(build_args,
                                                             num_processes):
-            for i in xrange(0, len(one_partition), max_chunk_size):
+            for i in range(0, len(one_partition), max_chunk_size):
                 partitions_of_build_args.append(
                     one_partition[i:i + max_chunk_size])
     elif compile_instance.num_outputs() == 0:
@@ -532,7 +581,7 @@ def _compile_together(outfile_names_and_deprules, pool, num_processes,
             partitions_of_build_args.append(one_partition)
     else:
         chunk_size = min(compile_instance.num_outputs(), max_chunk_size)
-        for i in xrange(0, len(build_args), chunk_size):
+        for i in range(0, len(build_args), chunk_size):
             one_partition = build_args[i:i + chunk_size]
             partitions_of_build_args.append(one_partition)
 
@@ -544,7 +593,7 @@ def _compile_together(outfile_names_and_deprules, pool, num_processes,
 
     # Combine the individual timing-info's into an aggregated map.
     for other_map in timing_info:
-        for (k, v) in other_map.iteritems():
+        for (k, v) in other_map.items():
             timing_map.setdefault(k, 0.0)
             timing_map[k] += v
 
@@ -552,6 +601,20 @@ def _compile_together(outfile_names_and_deprules, pool, num_processes,
     output_filenames = [of for (of, _, _, _) in build_args]
     filemod_db.set_up_to_date(*output_filenames)
     return output_filenames
+
+
+def _log_memory_usage(when=''):
+    if not psutil:
+        return
+
+    try:
+        rss_bytes = psutil.Process(os.getpid()).memory_info_ex().rss
+        if when:
+            when = ' %s' % when
+        log.v1("Current memory usage (rss)%s: %sM"
+               % (when, rss_bytes / 1024 / 1024))
+    except Exception as e:
+        log.v1("Failed to get memory usage: %s" % e)
 
 
 def _build_with_optional_checkpoints(outfile_names_and_contexts,
@@ -565,6 +628,7 @@ def _build_with_optional_checkpoints(outfile_names_and_contexts,
     # First, construct the dependency-graph to build these outfiles.
     log.v1('Determining the dependency graph for %s files',
            len(outfile_names_and_contexts))
+    _log_memory_usage("before computing dependency graph")
     log.v2('\n'.join('   ... %s' % f for (f, _) in outfile_names_and_contexts))
 
     # Create the pool of sub-processes that will be doing the building.
@@ -581,35 +645,46 @@ def _build_with_optional_checkpoints(outfile_names_and_contexts,
         dependency_graph.add_file(outfile_name, context, already_built,
                                   timing_map, force)
 
+    _log_memory_usage("before writing dependency graph")
     # Let's emit the dependency graph as a dot file or two!
     dependency_graph.emit_to_dot('genfiles/_rule_deps.dot')
+    _log_memory_usage("after writing dependency graph")
 
     # Now add the 'system variables' to the context of each node.
     # These context keys all have names that start with '_':
     # _input_map: a map from output-file to its input-files.  This
     #     gives every rule a mini-dependency-graph to work with.
     _input_map = {}
-    for (outfile_name, depnode) in dependency_graph.iteritems():
+    for (outfile_name, depnode) in dependency_graph.items():
         _input_map[outfile_name] = depnode.input_files
 
-    for (_, depnode) in dependency_graph.iteritems():
+    # Override the incomplete _input_map's that were set up in add_file().
+    for (_, depnode) in dependency_graph.items():
         depnode.context['_input_map'] = _input_map
 
     # Now, extract the files in dependency order, yielding a chunk of
     # files at a time -- all with the same compile_instance -- that we
     # pass to build() or build_many().
     log.v1('Building %s files', dependency_graph.len())
+    _log_memory_usage("before building files")
     last_checkpoint = time.time()
+    num_built = 0
     for to_build in _deps_to_compile_together(dependency_graph):
         new_changed_files = _compile_together(to_build, pool, num_processes,
                                               force, timing_map)
         changed_files.extend(new_changed_files)
+        num_built += len(to_build)
 
         if (checkpoint_interval is not None and
                 time.time() - last_checkpoint >= checkpoint_interval):
+            log.v1('Built %s of %s files so far (%.1f%%)',
+                   num_built, dependency_graph.len(),
+                   (num_built * 100.0 / dependency_graph.len()))
+            _log_memory_usage("after building %s files" % num_built)
             filemod_db.sync()
             last_checkpoint = time.time()
     log.v1('Done building %s files', dependency_graph.len())
+    _log_memory_usage("after building all files")
 
     # Close down the sub-process pool nicely.
     if pool:
@@ -618,7 +693,7 @@ def _build_with_optional_checkpoints(outfile_names_and_contexts,
 
     # Log the timing info.
     log.v1('Time spent in each build rule:')
-    timing = timing_map.items()
+    timing = list(timing_map.items())
     timing.sort(key=lambda kv: kv[1], reverse=True)    # slowest first
     total_time = 0.0
     for (compile_rule_label, cr_time) in timing:
@@ -708,6 +783,11 @@ def _immediate_build(output_filenames, context, caller,
         # We create a new context here instead of updating the existing
         # one to avoid modifying the caller's context.
         outfile_context = context.copy()
+        # Update the input_map, which is used in some error-messaging.
+        # This is a map from outfile -> infiles
+        outfile_context.setdefault('_input_map', {})
+        outfile_context['_input_map'].setdefault(caller, []).append(
+            output_filename)
         outfile_context.update(var_values)
 
         # Recursively build the triggers needed to compute our inputs, if any.
@@ -719,7 +799,8 @@ def _immediate_build(output_filenames, context, caller,
         # return a generator.
         for trigger in cr.input_trigger_files(output_filename,
                                               outfile_context):
-            _immediate_build([trigger], context, output_filename,
+            _immediate_build([trigger], context,
+                             output_filename + ' (via computed dep)',
                              already_built, timing_map, force)
 
         # Recursively build our inputs.
@@ -744,57 +825,3 @@ def _immediate_build(output_filenames, context, caller,
                           force, timing_map)
 
         already_built.add(output_filename)
-
-
-def build_many(outfile_names_and_contexts, num_processes=1, force=False,
-               checkpoint_interval=60 * 5):
-    """Create, or update if it's out of date, the given filename.
-
-    Raises an CompileFailure exception if it could not create or
-    update the file.
-
-    Arguments:
-       outfile_name_and_contexts: filenames relative to ka-root, each
-          context is an arbitrary dict passed to the build rule for
-          outfile_name and all its dependencies.
-       num_processes: the number of sub-processes to spawn to do the
-          building.  (1 means to build in the main process only.)
-       force: if True, force deps to be rebuilt even if they are up-to-date.
-       checkpoint_interval: if not None, flush the filemod db every
-          this many seconds, approximately.  This records the work
-          we've done so we don't have to re-do it if the process dies.
-
-    Returns:
-        The list of outfile_names that were actually rebuilt
-        (because they weren't up to date).
-    """
-    # We don't trust that files haven't changed since the last time we
-    # were called, so we can't use the mtime cache.
-    filemod_db.clear_mtime_cache()
-    return build_with_optional_checkpoints(
-        outfile_names_and_contexts, num_processes, force, checkpoint_interval)
-
-
-def build(outfile_name, context={}, num_processes=1, force=False,
-          checkpoint_interval=60 * 5):
-    """Create, or update if it's out of date, the given filename.
-
-    Raises an CompileFailure exception if it could not create or
-    update the file.
-
-    Arguments:
-       outfile_name: filename relative to ka-root.
-       context: an arbitrary dict passed to all build rules for this file.
-       num_processes: the number of sub-processes to spawn to do the
-          building.  (1 means to build in the main process only.)
-       force: if True, force deps to be rebuilt even if they are up-to-date.
-       checkpoint_interval: if not None, flush the filemod db every
-          this many seconds, approximately.  This records the work
-          we've done so we don't have to re-do it if the process dies.
-
-    Returns:
-        [outfile_name] if it had to be rebuilt (because it wasn't up
-        to date), or [] else.
-    """
-    return build_many([(outfile_name, context)], num_processes, force,
-                      checkpoint_interval)

@@ -141,7 +141,7 @@ def _fake_fetch(url_path, headers):
             return (None, 404, {})
 
         file_has_changed = True
-        ims = [v for (k, v) in headers.iteritems()
+        ims = [v for (k, v) in headers.items()
                if k.lower() == 'if-modified-since']
         if ims:
             parsed_ims = time.mktime(rfc822.parsedate(ims[0]))
@@ -197,7 +197,7 @@ def get(url_path, headers={}):
     # be huge! -- so make sure we leave out the two headers that might
     # result in a 304 Not-Modified response (one via lastmod-time, one
     # via etags) rather than a content-containing 200 response.
-    get_headers = {k: v for (k, v) in headers.iteritems()
+    get_headers = {k: v for (k, v) in headers.items()
                    if k.lower() not in ('if-modified-since', 'if-none-match')}
     (content, status_code, _) = _fetch(url_path, get_headers)
     assert status_code in (200, 400, 404), (status_code, url_path, get_headers)

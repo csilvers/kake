@@ -37,6 +37,7 @@ from __future__ import absolute_import
 
 import json
 import os
+import re
 
 from . import project_root
 
@@ -82,7 +83,7 @@ def _identity_sourcemap(filename, file_contents):
             "sources": [filename],
             "names": [],
             "mappings": ';'.join(mappings)
-            }
+        }
     else:
         return {
             "version": 3,           # v3 of the sourcemap protocol
@@ -90,7 +91,11 @@ def _identity_sourcemap(filename, file_contents):
             "sources": [],
             "names": [],
             "mappings": ';'.join(mappings)
-            }
+        }
+
+
+CSS_MAP_FILE_RE = re.compile(r"\.css(\.map)?$")
+JS_MAP_FILE_RE = re.compile(r"\.js(\.map)?$")
 
 
 class IndexSourcemap(object):
@@ -101,14 +106,23 @@ class IndexSourcemap(object):
             "version": 3,           # v3 of the sourcemap protocol
             "file": outfile_name,
             "sections": [],         # will be appended to below
-            }
+        }
 
         self.lineno = 0
         self.colno = 0
 
-    def add_section(self, filename, file_contents):
+    def add_section(self, filename, file_contents, sourcemap_location=None):
         """Indicate we've appended file_contents to the combined file."""
         num_lines = _num_lines(file_contents)
+
+        # Double check we can't automatically load any sourcemaps
+        # TODO(ktsashes): Some of the sourcemap urls coming in may be relative
+        # to the file or to some other location (likely from our minify/compile
+        # tools). Ideally we'd handle this by checking relative instead, but it
+        # is almost always next to it's source, so for now just check there
+        if filename and (not sourcemap_location or
+                         not os.path.exists(sourcemap_location)):
+            sourcemap_location = project_root.join(filename + '.map')
 
         if filename is None:
             # This content was added by the combiner-function, it's
@@ -117,22 +131,22 @@ class IndexSourcemap(object):
             self.sourcemap['sections'].append({
                 'offset': {'line': self.lineno, 'column': self.colno},
                 'map': _identity_sourcemap(None, file_contents)
-                })
-        elif os.path.exists(project_root.join(filename + '.map')):
+            })
+        elif os.path.exists(sourcemap_location):
             # In theory, we could just reference the existing sourcemap
             # using the 'url' field.  But this isn't working on chrome 31.
             # Instead, we inline.  TODO(csilvers): figure out what's failing.
-            with open(project_root.join(filename + '.map')) as f:
+            with open(sourcemap_location) as f:
                 self.sourcemap['sections'].append({
                     'offset': {'line': self.lineno, 'column': self.colno},
                     'map': json.load(f),
-                    })
+                })
         else:
             # We will just use an identity sourcemap.
             self.sourcemap['sections'].append({
                 'offset': {'line': self.lineno, 'column': self.colno},
                 'map': _identity_sourcemap(filename, file_contents),
-                })
+            })
 
         # Now update lineno and colno
         if file_contents.endswith('\n'):    # common case
@@ -144,7 +158,18 @@ class IndexSourcemap(object):
             self.lineno += num_lines - 1
             self.colno = len(file_contents) - (file_contents.rfind('\n') + 1)
 
+    def update_outfile_name(self, outfile):
+        self.sourcemap['file'] = outfile
+
     def to_json(self):
         """Sourcemaps are represented as json files."""
         # indent + sort_keys are to make the output more human-readable.
         return json.dumps(self.sourcemap, indent=2, sort_keys=True)
+
+    def to_comment(self, filename):
+        comment = "# sourceMappingURL=/%s " % filename
+        if CSS_MAP_FILE_RE.search(filename):
+            comment = "/*%s*/" % comment
+        elif JS_MAP_FILE_RE.search(filename):
+            comment = "//%s" % comment
+        return "\n%s" % comment

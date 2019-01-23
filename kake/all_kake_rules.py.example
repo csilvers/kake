@@ -1,0 +1,25 @@
+"""The basic infrastructure for creating a generated file.
+
+Creating a generated file requires understanding dependencies and
+scheduling tasks.
+"""
+from __future__ import absolute_import
+
+from kake import compile_rule
+
+
+def all_compile_rules():
+    """Return a list of every subclass of CompileRule."""
+    # Import all the compile modules here.  They register themselves.
+    import kake_rules.compile_calculator      # @UnusedImport
+    import kake_rules.compile_es6             # @UnusedImport
+    import kake_rules.compile_extracted_js    # @UnusedImport
+    import kake_rules.translate_css           # @UnusedImport
+    # [etc]
+
+    # _COMPILE_RULES has this two-layer structure for efficiency.  We
+    # collapse it here.
+    retval = set()
+    for rules in compile_rule._COMPILE_RULES.itervalues():
+        retval.update(rules)
+    return retval

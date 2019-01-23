@@ -1,21 +1,21 @@
 """Tests for computed_inputs.py."""
-
 from __future__ import absolute_import
 
 import os
 import re
 
 try:
-    from unittest import mock   # python3
+    from unittest import mock  # python 3
 except ImportError:
     import mock
+from kake import project_root
 
 from kake import build
 from kake import compile_rule
 from kake import computed_inputs
 from kake import filemod_db
-from kake import project_root
 import testutil
+import kake.make
 
 
 class CopyCompile(compile_rule.CompileBase):
@@ -49,6 +49,15 @@ class ComputedStaticInputs(computed_inputs.ComputedInputsBase):
         return ['a1', 'a2']
 
 
+class UnnormalizedComputedInputs(
+        computed_inputs.ComputedInputsBase):
+    def version(self):
+        return 1
+
+    def input_patterns(self, outfile_name, context, triggers, changed):
+        return ['genfiles/../a1', 'genfiles/../a2']
+
+
 class ComputedInputsFromVar(computed_inputs.ComputedInputsBase):
     def version(self):
         return 1
@@ -57,7 +66,8 @@ class ComputedInputsFromVar(computed_inputs.ComputedInputsBase):
         return ['a{number}']
 
 
-class ComputedInputsFromFileContents(computed_inputs.ComputedInputsBase):
+class ComputedInputsFromFileContents(
+        computed_inputs.ComputedInputsBase):
     def version(self):
         return 1
 
@@ -67,7 +77,8 @@ class ComputedInputsFromFileContents(computed_inputs.ComputedInputsBase):
             return content.split(',') if content else []
 
 
-class ComputedInputsFromChangedContents(computed_inputs.ComputedInputsBase):
+class ComputedInputsFromChangedContents(
+        computed_inputs.ComputedInputsBase):
     def version(self):
         return 1
 
@@ -81,7 +92,8 @@ class ComputedInputsFromChangedContents(computed_inputs.ComputedInputsBase):
         return retval
 
 
-class ComputedInputsFromContext(computed_inputs.ComputedInputsBase):
+class ComputedInputsFromContext(
+        computed_inputs.ComputedInputsBase):
     def version(self):
         return 1
 
@@ -93,12 +105,14 @@ class ComputedInputsFromContext(computed_inputs.ComputedInputsBase):
         return ["usethesefiles"]
 
 
-class ComputedIncludeInputsSubclass(computed_inputs.ComputedIncludeInputs):
+class ComputedIncludeInputsSubclass(
+        computed_inputs.ComputedIncludeInputs):
     def version(self):
         return 1
 
 
-class VarDependentComputedIncludeInputs(computed_inputs.ComputedIncludeInputs):
+class VarDependentComputedIncludeInputs(
+        computed_inputs.ComputedIncludeInputs):
     def version(self):
         return 1
 
@@ -116,7 +130,8 @@ class VarDependentComputedIncludeInputs(computed_inputs.ComputedIncludeInputs):
         return os.path.join(os.path.dirname(abs_include_path), relpath)
 
 
-class NoCommentComputedIncludeInputs(computed_inputs.ComputedIncludeInputs):
+class NoCommentComputedIncludeInputs(
+        computed_inputs.ComputedIncludeInputs):
     STRIP_COMMENT_RE = re.compile(r'/\*.*?\*/', re.DOTALL)
 
     def version(self):
@@ -140,19 +155,26 @@ class TestBase(testutil.KakeTestBase):
         self.mtime = 10000
 
     def setUp(self):
-        super(TestBase, self).setUp()     # sets up self.tmpdir as project-root
+        super(TestBase, self).setUp()     # sets up self.tmpdir as ka-root
 
-        os.makedirs(os.path.join(self.tmpdir, 'genfiles', 'computed_inputs'))
+        os.makedirs(os.path.join(self.tmpdir, 'genfiles',
+                                 'computed_inputs'))
 
         for filename in ('a1', 'a2', 'b1', 'b2', 'number3'):
             with open(self._abspath(filename), 'w') as f:
-                print >>f, '%s: line 1' % filename
-                print >>f, '%s: line 2' % filename
+                f.write('%s: line 1' % filename + "\n")
+                f.write('%s: line 2' % filename + "\n")
 
         compile_rule.register_compile(
             'STATIC',
             'genfiles/computed_inputs/static',
             ComputedStaticInputs(['a1', 'a2']),
+            CopyCompile())
+
+        compile_rule.register_compile(
+            'UNNORMALIZED',
+            'genfiles/computed_inputs/unnormalized',
+            UnnormalizedComputedInputs(['a1', 'a2']),
             CopyCompile())
 
         compile_rule.register_compile(
@@ -170,13 +192,15 @@ class TestBase(testutil.KakeTestBase):
         compile_rule.register_compile(
             'B TAKE 2',
             'genfiles/computed_2/b{number}',
-            ComputedInputsFromVar(['genfiles/computed_inputs/b{number}']),
+            ComputedInputsFromVar(
+                ['genfiles/computed_inputs/b{number}']),
             CopyCompile())
 
         compile_rule.register_compile(
             'FROM CONTEXT',
             'genfiles/computed_fromcontext/index',
-            ComputedInputsFromContext(['genfiles/computed_inputs/b1']),
+            ComputedInputsFromContext(
+                ['genfiles/computed_inputs/b1']),
             CopyCompile())
 
         compile_rule.register_compile(
@@ -188,7 +212,8 @@ class TestBase(testutil.KakeTestBase):
         compile_rule.register_compile(
             'CURR',
             'genfiles/computed_inputs/curr',
-            ComputedStaticInputs([computed_inputs.CURRENT_INPUTS]),
+            ComputedStaticInputs(
+                [computed_inputs.CURRENT_INPUTS]),
             CopyCompile())
 
         compile_rule.register_compile(
@@ -208,7 +233,7 @@ class TestBase(testutil.KakeTestBase):
         super(TestBase, self).tearDown()
 
     def _write_to(self, filename, contents):
-        """filename is relative to project-root."""
+        """filename is relative to ka-root."""
         with open(self._abspath(filename), 'w') as f:
             f.write(contents)
 
@@ -225,15 +250,18 @@ class TestBase(testutil.KakeTestBase):
 
 class TestCompileRule(TestBase):
     def test_input_trigger_files(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/static')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/static')
         self.assertEqual(['a1', 'a2'], cr.input_trigger_files(
             'genfiles/computed_inputs/static'))
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/b2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/b2')
         self.assertEqual(['b2'], cr.input_trigger_files(
             'genfiles/computed_inputs/b2'))
 
     def test_current_inputs(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/curr')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/curr')
         # Should be empty because CURRENT_INPUTS is empty.
         self.assertEqual([], cr.input_trigger_files(
             'genfiles/computed_inputs/curr'))
@@ -242,12 +270,22 @@ class TestCompileRule(TestBase):
 class TestComputedInputs(TestBase):
     """Test the ComputeInputsBase subclasses from compile_rule.py"""
     def test_computes_inputs(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/static')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/static')
         self.assertEqual(['a1', 'a2'], cr.input_files(
             'genfiles/computed_inputs/static'))
 
+    def test_does_not_normalize(self):
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/unnormalized')
+        self.assertEqual(
+            ['genfiles/../a1', 'genfiles/../a2'],
+            cr.input_files(
+                'genfiles/computed_inputs/unnormalized'))
+
     def test_no_trigger_changes(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/static')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/static')
         with self.assertCalled(cr.input_patterns.input_patterns, 1):
             self.assertEqual(['a1', 'a2'], cr.input_files(
                 'genfiles/computed_inputs/static'))
@@ -258,7 +296,8 @@ class TestComputedInputs(TestBase):
                 'genfiles/computed_inputs/static'))
 
     def test_force(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/static')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/static')
         with self.assertCalled(cr.input_patterns.input_patterns, 1):
             self.assertEqual(['a1', 'a2'], cr.input_files(
                 'genfiles/computed_inputs/static'))
@@ -274,7 +313,8 @@ class TestComputedInputs(TestBase):
                 'genfiles/computed_inputs/static', force=True))
 
     def test_trigger_changes(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/static')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/static')
         with self.assertCalled(cr.input_patterns.input_patterns, 1):
             self.assertEqual(['a1', 'a2'], cr.input_files(
                 'genfiles/computed_inputs/static'))
@@ -288,56 +328,67 @@ class TestComputedInputs(TestBase):
                 'genfiles/computed_inputs/static'))
 
     def test_trigger_changes_on_genfiles(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/a2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/a2')
         with self.assertCalled(cr.input_patterns.input_patterns, 1):
-            self.assertEqual(['a2'],
-                             cr.input_files('genfiles/computed_inputs/a2'))
+            self.assertEqual(
+                ['a2'],
+                cr.input_files('genfiles/computed_inputs/a2'))
 
         self._write_to('number3', '')
         filemod_db.clear_mtime_cache()
 
         with self.assertCalled(cr.input_patterns.input_patterns, 1):
-            self.assertEqual(['a2'],
-                             cr.input_files('genfiles/computed_inputs/a2'))
+            self.assertEqual(
+                ['a2'],
+                cr.input_files('genfiles/computed_inputs/a2'))
 
     def test_trigger_depends_on_output(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/b2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/b2')
         with self.assertCalled(cr.input_patterns.input_patterns, 1):
-            self.assertEqual(['a2'],
-                             cr.input_files('genfiles/computed_inputs/b2'))
+            self.assertEqual(
+                ['a2'],
+                cr.input_files('genfiles/computed_inputs/b2'))
 
         self._write_to('b2', '')
         filemod_db.clear_mtime_cache()
         with self.assertCalled(cr.input_patterns.input_patterns, 1):
-            self.assertEqual(['a2'],
-                             cr.input_files('genfiles/computed_inputs/b2'))
+            self.assertEqual(
+                ['a2'],
+                cr.input_files('genfiles/computed_inputs/b2'))
 
         # But if we touch b1, it doesn't cause a new call
         self._write_to('b1', '')
         filemod_db.clear_mtime_cache()
         with self.assertCalled(cr.input_patterns.input_patterns, 0):
-            self.assertEqual(['a2'],
-                             cr.input_files('genfiles/computed_inputs/b2'))
+            self.assertEqual(
+                ['a2'],
+                cr.input_files('genfiles/computed_inputs/b2'))
 
     def test_computed_inputs_from_var(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/a1')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/a1')
         self.assertEqual(['a1'], cr.input_files(
             'genfiles/computed_inputs/a1'))
 
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/a2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/a2')
         self.assertEqual(['a2'], cr.input_files(
             'genfiles/computed_inputs/a2'))
 
         # Make sure that a2 didn't overwrite any info about a1, and
         # didn't cause an unnecessary re-compute.
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/a1')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/a1')
         with self.assertCalled(cr.input_patterns.input_patterns, 0):
             self.assertEqual(['a1'], cr.input_files(
                 'genfiles/computed_inputs/a1'))
 
     def test_computed_inputs_from_file(self):
         self._write_to('a1', 'a1,a2,genfiles/fnumber')
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/content')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/content')
         self.assertEqual(['a1', 'a2', 'genfiles/fnumber'], cr.input_files(
             'genfiles/computed_inputs/content'))
 
@@ -345,12 +396,12 @@ class TestComputedInputs(TestBase):
         filemod_db.clear_mtime_cache()
 
         with self.assertCalled(cr.input_patterns.input_patterns, 1):
-            self.assertEqual(
-                ['b1', 'genfiles/fletter'],
-                cr.input_files('genfiles/computed_inputs/content'))
+            self.assertEqual(['b1', 'genfiles/fletter'], cr.input_files(
+                'genfiles/computed_inputs/content'))
 
     def test_current_inputs(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/curr')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/curr')
         self.assertEqual(['a1', 'a2'], cr.input_files(
             'genfiles/computed_inputs/curr'))
         self.assertEqual(['a1', 'a2'], cr.input_trigger_files(
@@ -360,11 +411,13 @@ class TestComputedInputs(TestBase):
         filemod_db.clear_mtime_cache()
 
         with self.assertCalled(cr.input_patterns.input_patterns, 1):
-            self.assertEqual(['a1', 'a2'],
-                             cr.input_files('genfiles/computed_inputs/curr'))
+            self.assertEqual(
+                ['a1', 'a2'],
+                cr.input_files('genfiles/computed_inputs/curr'))
 
     def test_growing_current_inputs(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/curr2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/curr2')
         self._write_to('a1', '')
         self.assertEqual([], cr.input_files(
             'genfiles/computed_inputs/curr2'))
@@ -391,7 +444,8 @@ class TestComputedInputs(TestBase):
 
     def test_compute_crc(self):
         self._write_to('a1', 'a1,a2,genfiles/fnumber')
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/content')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/content')
         self.assertEqual(['a1', 'a2', 'genfiles/fnumber'], cr.input_files(
             'genfiles/computed_inputs/content'))
 
@@ -401,13 +455,15 @@ class TestComputedInputs(TestBase):
 
         # This should not cause a recompute even though the mtime has
         # changed, because we used compute_crc.
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/content')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/content')
         with self.assertCalled(cr.input_patterns.input_patterns, 0):
             self.assertEqual(['a1', 'a2', 'genfiles/fnumber'], cr.input_files(
                 'genfiles/computed_inputs/content'))
 
     def test_version_change_forces_rebuild(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/static')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/static')
         with self.assertCalled(cr.input_patterns.input_patterns, 1):
             self.assertEqual(['a1', 'a2'], cr.input_files(
                 'genfiles/computed_inputs/static'))
@@ -435,7 +491,8 @@ class TestBuild(TestBase):
 
     def test_build(self):
         self._write_to('a1', 'b2,b1')
-        build.build('genfiles/computed_inputs/content')
+        kake.make.build(
+            'genfiles/computed_inputs/content')
         self.assertFile('genfiles/computed_inputs/content',
                         'b2: line 1\nb2: line 2\n'
                         'b1: line 1\nb1: line 2\n')
@@ -444,14 +501,14 @@ class TestBuild(TestBase):
         cr = compile_rule.find_compile_rule(
             'genfiles/computed_fromcontext/index')
 
-        build.build('genfiles/computed_fromcontext/index', {
+        kake.make.build('genfiles/computed_fromcontext/index', {
             'usethesefiles': ['b2', 'b1']})
         self.assertFile('genfiles/computed_fromcontext/index',
                         'b2: line 1\nb2: line 2\n'
                         'b1: line 1\nb1: line 2\n')
 
         with self.assertCalled(cr.input_patterns.input_patterns, 1):
-            build.build('genfiles/computed_fromcontext/index', {
+            kake.make.build('genfiles/computed_fromcontext/index', {
                 'usethesefiles': ['a2', 'a1']})
         self.assertFile('genfiles/computed_fromcontext/index',
                         'a2: line 1\na2: line 2\n'
@@ -459,30 +516,31 @@ class TestBuild(TestBase):
 
         # But if the context stays the same, we shouldn't re-call.
         with self.assertCalled(cr.input_patterns.input_patterns, 0):
-            build.build('genfiles/computed_fromcontext/index', {
+            kake.make.build('genfiles/computed_fromcontext/index', {
                 'usethesefiles': ['a2', 'a1']})
 
         # And also if some unrelated context gets added and/or changed.
         with self.assertCalled(cr.input_patterns.input_patterns, 0):
-            build.build('genfiles/computed_fromcontext/index', {
+            kake.make.build('genfiles/computed_fromcontext/index', {
                 'usethesefiles': ['a2', 'a1'], 'foo': 1})
 
         with self.assertCalled(cr.input_patterns.input_patterns, 0):
-            build.build('genfiles/computed_fromcontext/index', {
+            kake.make.build('genfiles/computed_fromcontext/index', {
                 'usethesefiles': ['a2', 'a1'], 'foo': 2})
 
     def test_genfile_trigger(self):
-        build.build('genfiles/computed_2/b2')
+        kake.make.build('genfiles/computed_2/b2')
         self.assertFile('genfiles/computed_2/b2',
                         'a2: line 1\na2: line 2\n')
 
-        cr = compile_rule.find_compile_rule('genfiles/computed_2/b2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_2/b2')
         self.assertEqual(['genfiles/computed_inputs/b2'],
                          cr.input_trigger_files('genfiles/computed_2/b2'))
         self.assertEqual(['a2'], cr.input_files('genfiles/computed_2/b2'))
 
     def test_removed_includes_forces_rebuild(self):
-        build.build('genfiles/computed_inputs/static')
+        kake.make.build('genfiles/computed_inputs/static')
         self.assertFile('genfiles/computed_inputs/static',
                         'a1: line 1\na1: line 2\n'
                         'a2: line 1\na2: line 2\n')
@@ -492,22 +550,40 @@ class TestBuild(TestBase):
         with mock.patch.object(ComputedStaticInputs, 'version', lambda cls: 2):
             with mock.patch.object(ComputedStaticInputs, 'input_patterns',
                                    lambda *args: ['a1']):
-                build.build('genfiles/computed_inputs/static')
+                kake.make.build(
+                    'genfiles/computed_inputs/static')
         self.assertFile('genfiles/computed_inputs/static',
                         'a1: line 1\na1: line 2\n')
 
     def test_force_rebuild(self):
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/force')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/force')
         with self.assertCalled(cr.input_patterns.input_patterns, 2):
-            build.build('genfiles/computed_inputs/force')
-            build.build('genfiles/computed_inputs/force')
+            kake.make.build(
+                'genfiles/computed_inputs/force')
+            kake.make.build(
+                'genfiles/computed_inputs/force')
 
         # Just to be sure, show that a normal, non-FORCE rule only
         # calls input_patterns once.
-        cr = compile_rule.find_compile_rule('genfiles/computed_inputs/static')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/static')
         with self.assertCalled(cr.input_patterns.input_patterns, 1):
-            build.build('genfiles/computed_inputs/static')
-            build.build('genfiles/computed_inputs/static')
+            kake.make.build(
+                'genfiles/computed_inputs/static')
+            kake.make.build(
+                'genfiles/computed_inputs/static')
+
+    def test_does_not_rebuild_with_unnormalized_inputs(self):
+        cr = compile_rule.find_compile_rule(
+            'genfiles/computed_inputs/unnormalized')
+        # If we don't normalize correctly, this will fail with
+        # "No rule found to geenrate genfiles/../a1"
+        with self.assertCalled(cr.input_patterns.input_patterns, 1):
+            kake.make.build(
+                'genfiles/computed_inputs/unnormalized')
+            kake.make.build(
+                'genfiles/computed_inputs/unnormalized')
 
 
 class TestComputedIncludes(TestBase):
@@ -517,76 +593,85 @@ class TestComputedIncludes(TestBase):
         os.makedirs(self._abspath('includes'))
 
         with open(self._abspath('a.c'), 'w') as f:
-            print >>f, '#include <stdio.h>'
-            print >>f, '#include "a.h"'
-            print >>f, 'int main() { return 0; }'
+            f.write('#include <stdio.h>' + "\n")
+            f.write('#include "a.h"' + "\n")
+            f.write('int main() { return 0; }' + "\n")
 
         with open(self._abspath('commented.c'), 'w') as f:
-            print >>f, '/*'
-            print >>f, '#include "a.h"'
-            print >>f, '*/'
-            print >>f, '#include "includes/d.h"'
+            f.write('/*' + "\n")
+            f.write('#include "a.h"' + "\n")
+            f.write('*/' + "\n")
+            f.write('#include "includes/d.h"' + "\n")
 
         with open(self._abspath('a.h'), 'w') as f:
-            print >>f, '#include "includes/b.h"'
+            f.write('#include "includes/b.h"' + "\n")
 
         with open(self._abspath(os.path.join('includes', 'b.h')), 'w') as f:
-            print >>f, '#include "c.h"'
+            f.write('#include "c.h"' + "\n")
 
         with open(self._abspath(os.path.join('includes', 'c.h')), 'w') as f:
-            print >>f, '#define AVOID_CIRCULAR_INCLUDE 1'
-            print >>f, '#include "b.h"'
-            print >>f, '#include "../a.h"'
+            f.write('#define AVOID_CIRCULAR_INCLUDE 1' + "\n")
+            f.write('#include "b.h"' + "\n")
+            f.write('#include "../a.h"' + "\n")
 
         with open(self._abspath(os.path.join('includes', 'd.h')), 'w') as f:
-            print >>f, '#define MY_USE "hello, world"'
+            f.write('#define MY_USE "hello, world"' + "\n")
 
         with open(self._abspath('b.c'), 'w') as f:
-            print >>f, '#include "includes/b.h"'
+            f.write('#include "includes/b.h"' + "\n")
+
+        with open(self._abspath('double_include.c'), 'w') as f:
+            f.write('#include "./a.h"' + "\n")
+            f.write('#include "./a.h"' + "\n")
 
         with open(self._abspath('yelling.loudc'), 'w') as f:
-            print >>f, '#INCLUDE "VUVUZELA.C"'
-            print >>f, '#INCLUDE "GODZILLA.C"'
-            print >>f, 'INT MAIN() { RETURN 0; }'
+            f.write('#INCLUDE "VUVUZELA.C"' + "\n")
+            f.write('#INCLUDE "GODZILLA.C"' + "\n")
+            f.write('INT MAIN() { RETURN 0; }' + "\n")
 
         with open(self._abspath('vuvuzela.loudc'), 'w') as f:
-            print >>f, '#INCLUDE "GODZILLA.C"'
+            f.write('#INCLUDE "GODZILLA.C"' + "\n")
 
         with open(self._abspath('godzilla.loudc'), 'w') as f:
-            print >>f, '#INCLUDE "VUVUZELA.C"'
-            print >>f, '#DEFINE LOCALE "ja-JP"'
+            f.write('#INCLUDE "VUVUZELA.C"' + "\n")
+            f.write('#DEFINE LOCALE "ja-JP"' + "\n")
 
         with open(self._abspath('magic.c'), 'w') as f:
-            print >>f, '#include "?.h"'
+            f.write('#include "?.h"' + "\n")
 
         self.includer = computed_inputs.ComputedIncludeInputs(
             '{{path}}.c', r'^#include\s+"(.*?)"', other_inputs=['a1'])
 
-        compile_rule.register_compile('II', 'genfiles/{{path}}.ii',
-                                      self.includer, CopyCompile())
+        compile_rule.register_compile(
+            'II', 'genfiles/{{path}}.ii',
+            self.includer, CopyCompile())
 
         self.genfiles_includer = ComputedIncludeInputsSubclass(
             'genfiles/{{path}}.c', r'^#include\s+"(.*?)"')
 
-        compile_rule.register_compile('GENII', 'genfiles/{{path}}.genii',
-                                      self.genfiles_includer, CopyCompile())
+        compile_rule.register_compile(
+            'GENII', 'genfiles/{{path}}.genii',
+            self.genfiles_includer, CopyCompile())
 
         self.var_dep_includer = VarDependentComputedIncludeInputs(
             'magic.c', r'^#include\s+"(.*?)"')
 
-        compile_rule.register_compile('VARII', 'genfiles/{{path}}.varii',
-                                      self.var_dep_includer, CopyCompile())
+        compile_rule.register_compile(
+            'VARII', 'genfiles/{{path}}.varii',
+            self.var_dep_includer, CopyCompile())
 
         self.no_comment_dep_includer = NoCommentComputedIncludeInputs(
             '{{path}}.c', r'^#include\s+"(.*?)"')
 
-        compile_rule.register_compile('NCII', 'genfiles/{{path}}.ncii',
-                                      self.no_comment_dep_includer,
-                                      CopyCompile())
+        compile_rule.register_compile(
+            'NCII', 'genfiles/{{path}}.ncii',
+            self.no_comment_dep_includer,
+            CopyCompile())
 
-        compile_rule.register_compile('C', 'genfiles/{{path}}.c',
-                                      ['{{path}}.loudc'],
-                                      DowncaseCompile())
+        compile_rule.register_compile(
+            'C', 'genfiles/{{path}}.c',
+            ['{{path}}.loudc'],
+            DowncaseCompile())
 
     def test_simple(self):
         cr = compile_rule.find_compile_rule('genfiles/a.ii')
@@ -715,43 +800,56 @@ class TestComputedIncludes(TestBase):
         self.assertEqual(['a.c', 'a.h', 'includes/b.h', 'includes/c.h'],
                          list(cr.input_trigger_files('genfiles/a.ii')))
 
-    def test_generated_trigger_files(self):
-        # To avoid having build() calls in computed_inputs, it assumes that all
-        # the trigger files are built as part of a build call. We're interested
-        # in inspecting the results of the input_files() call here, so we need
-        # to make sure all the trigger files are already built
-        build.build('genfiles/yelling.genii')
+    def test_duplicated_includes(self):
+        cr = compile_rule.find_compile_rule(
+            'genfiles/double_include.ii')
+        self.assertEqual(
+            ['a.h', 'double_include.c', 'includes/b.h', 'includes/c.h', 'a1'],
+            cr.input_files('genfiles/double_include.ii'))
 
-        cr = compile_rule.find_compile_rule('genfiles/yelling.genii')
-        self.assertEqual(['genfiles/yelling.c',
+    def test_generated_trigger_files(self):
+        # To avoid having build() calls in
+        # computed_inputs, it assumes that all the
+        # trigger files are built as part of a build call. We're
+        # interested in inspecting the results of the input_files()
+        # call here, so we need to make sure all the trigger files are
+        # already built
+        kake.make.build('genfiles/yelling.genii')
+
+        cr = compile_rule.find_compile_rule(
+            'genfiles/yelling.genii')
+        self.assertEqual(['genfiles/godzilla.c',
                           'genfiles/vuvuzela.c',
-                          'genfiles/godzilla.c'],
+                          'genfiles/yelling.c'],
                          cr.input_files('genfiles/yelling.genii'))
 
     def test_generated_trigger_files_immediate(self):
-        # To avoid having build() calls in computed_inputs, it assumes that all
-        # the trigger files are built as part of a build call. We're interested
-        # in inspecting the results of the input_files() call here, so we need
-        # to make sure all the trigger files are already built
+        # To avoid having build() calls in
+        # computed_inputs, it assumes that all the
+        # trigger files are built as part of a build call. We're
+        # interested in inspecting the results of the input_files()
+        # call here, so we need to make sure all the trigger files are
+        # already built
         build._immediate_build(['genfiles/yelling.genii'],
-                               context={},
-                               caller=None,
-                               already_built=set(),
-                               timing_map={},
-                               force=True)
+                                              context={},
+                                              caller=None,
+                                              already_built=set(),
+                                              timing_map={},
+                                              force=True)
 
-        cr = compile_rule.find_compile_rule('genfiles/yelling.genii')
-        self.assertEqual(['genfiles/yelling.c',
+        cr = compile_rule.find_compile_rule(
+            'genfiles/yelling.genii')
+        self.assertEqual(['genfiles/godzilla.c',
                           'genfiles/vuvuzela.c',
-                          'genfiles/godzilla.c'],
+                          'genfiles/yelling.c'],
                          cr.input_files('genfiles/yelling.genii'))
 
     def test_version_change_on_subclass_forces_complete_rebuild(self):
-        build.build('genfiles/yelling.genii')
+        kake.make.build('genfiles/yelling.genii')
 
         with mock.patch.object(self.genfiles_includer, 'version', lambda: 2):
             with mock.patch('kake.log.v3') as logger:
-                build.build('genfiles/yelling.genii')
+                kake.make.build('genfiles/yelling.genii')
                 self.assertIn(mock.call('extracting includes from %s',
                                         'genfiles/vuvuzela.c'),
                               logger.call_args_list)
@@ -801,14 +899,14 @@ class TestComputedIncludes(TestBase):
         cr = compile_rule.find_compile_rule('genfiles/a.ii')
         nccr = compile_rule.find_compile_rule('genfiles/a.ncii')
 
-        self.assertEqual(
+        self.assertItemsEqual(
             ['commented.c',
-             'a.h',
              'includes/d.h',
+             'a.h',
              'includes/b.h',
              'includes/c.h'],
             list(cr.input_trigger_files('genfiles/commented.ii')))
-        self.assertEqual(
+        self.assertItemsEqual(
             ['commented.c',
              'includes/d.h'],
             list(nccr.input_trigger_files('genfiles/commented.ncii')))

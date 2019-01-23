@@ -9,17 +9,22 @@ import resource
 import shutil
 import unittest
 
+try:
+    from unittest import mock  # python 3
+except ImportError:
+    import mock
+
 from kake import build
 from kake import compile_rule
 from kake import computed_inputs
-import kake.filemod_db
+from kake import filemod_db
 import testutil
 
 
 # Matches what make.py does.
 def _build_many(outfile_names_and_contexts, num_processes=1, force=False,
                 checkpoint_interval=None):
-    kake.filemod_db.clear_mtime_cache()
+    filemod_db.clear_mtime_cache()
     return build.build_with_optional_checkpoints(
         outfile_names_and_contexts, num_processes, force, checkpoint_interval)
 
@@ -83,7 +88,7 @@ class WriteContext(compile_rule.CompileBase):
 
     def build(self, output_filename, input_filenames, _, context):
         with open(self.abspath(output_filename), 'w') as f:
-            print >>f, context['content']
+            f.write(context['content'] + "\n")
 
     @classmethod
     def used_context_keys(cls):
@@ -108,7 +113,7 @@ class WriteBasedOnFilenameMany(compile_rule.CompileBase):
         for (output_filename, input_filenames, _, context) in (
                 output_input_changed_context):
             with open(self.abspath(output_filename), 'w') as f:
-                print >>f, context['{content}']
+                f.write(context['{content}'] + "\n")
 
     def num_outputs(self):
         return 100000
@@ -123,7 +128,7 @@ class WriteBasedOnFilenameSplit(compile_rule.CompileBase):
         for (output_filename, input_filenames, _, context) in (
                 output_input_changed_context):
             with open(self.abspath(output_filename), 'w') as f:
-                print >>f, context['{content}']
+                f.write(context['{content}'] + "\n")
 
     def split_outputs(self, output_input_changed_context, num_processes):
         yield output_input_changed_context
@@ -137,12 +142,12 @@ class ManuallySplit(compile_rule.CompileBase):
         for (output_filename, input_filenames, _, context) in (
                 output_input_changed_context):
             with open(self.abspath(output_filename), 'w') as f:
-                print >>f, input_filenames
+                f.write(input_filenames + "\n")
 
     def split_outputs(self, output_input_changed_context, num_processes):
         sorted_outputs = sorted(output_input_changed_context)
-        chunk_size = ((len(sorted_outputs) - 1) / num_processes) + 1
-        for i in xrange(0, len(sorted_outputs), chunk_size):
+        chunk_size = ((len(sorted_outputs) - 1) // num_processes) + 1
+        for i in range(0, len(sorted_outputs), chunk_size):
             yield sorted_outputs[i:i + chunk_size]
 
 
@@ -157,7 +162,7 @@ class FailToBuild(compile_rule.CompileBase):
         for (output_filename, input_filenames, _, context) in (
                 output_input_changed_context):
             with open(self.abspath(output_filename), 'w') as f:
-                print >>f, input_filenames
+                f.write(input_filenames + "\n")
 
     def num_outputs(self):
         return 1000
@@ -169,107 +174,123 @@ class TestBase(testutil.KakeTestBase):
 
         for filename in ('a1', 'a2', 'b1', 'b2', 'number3'):
             with open(self._abspath(filename), 'w') as f:
-                print >>f, '%s: line 1' % filename
-                print >>f, '%s: line 2' % filename
+                f.write('%s: line 1' % filename + "\n")
+                f.write('%s: line 2' % filename + "\n")
 
         self.copy_compile = CopyCompile()
         self.rev_compile = RevCompile()
         self.write_context = WriteContext()
 
         # i_number_1 depends on a1 and b1, likewise i_number_2.
-        compile_rule.register_compile('NUMBER',
-                                      'genfiles/i_number_{number}',
-                                      ['a{number}', 'b{number}'],
-                                      self.copy_compile)
+        compile_rule.register_compile(
+            'NUMBER',
+            'genfiles/i_number_{number}',
+            ['a{number}', 'b{number}'],
+            self.copy_compile)
 
         # i_letter_a depends on a1 and a2, likewise i_letter_b.
-        compile_rule.register_compile('LETTER',
-                                      'genfiles/i_letter_{letter}',
-                                      ['{letter}1', '{letter}2'],
-                                      self.copy_compile)
+        compile_rule.register_compile(
+            'LETTER',
+            'genfiles/i_letter_{letter}',
+            ['{letter}1', '{letter}2'],
+            self.copy_compile)
 
         # fnumber depends on i_number_1 and i_number_2
-        compile_rule.register_compile('FNUMBER',
-                                      'genfiles/fnumber',
-                                      ['genfiles/i_number_1',
-                                       'genfiles/i_number_2'],
-                                      self.copy_compile)
+        compile_rule.register_compile(
+            'FNUMBER',
+            'genfiles/fnumber',
+            ['genfiles/i_number_1',
+             'genfiles/i_number_2'],
+            self.copy_compile)
 
         # fletter depends on i_letter_a and i_letter_b
-        compile_rule.register_compile('FLETTER',
-                                      'genfiles/fletter',
-                                      ['genfiles/i_letter_a',
-                                       'genfiles/i_letter_b'],
-                                      self.copy_compile)
+        compile_rule.register_compile(
+            'FLETTER',
+            'genfiles/fletter',
+            ['genfiles/i_letter_a',
+             'genfiles/i_letter_b'],
+            self.copy_compile)
 
         # It uses a different instance of CopyCompile() in order to test
         # that case in TestDependencyChunking.
-        compile_rule.register_compile('FMOST',
-                                      'genfiles/fmost',
-                                      ['genfiles/i_letter_a', 'b1'],
-                                      CopyCompile())
+        compile_rule.register_compile(
+            'FMOST',
+            'genfiles/fmost',
+            ['genfiles/i_letter_a', 'b1'],
+            CopyCompile())
 
         # bnumber depends on oletter, bletter depends on onumber
-        compile_rule.register_compile('BLETTER',
-                                      'genfiles/bletter',
-                                      ['genfiles/fletter'],
-                                      self.rev_compile)
-        compile_rule.register_compile('BNUMBER',
-                                      'genfiles/bnumber',
-                                      ['genfiles/fnumber'],
-                                      self.rev_compile,
-                                      non_input_deps=['genfiles/i_letter_a'])
+        compile_rule.register_compile(
+            'BLETTER',
+            'genfiles/bletter',
+            ['genfiles/fletter'],
+            self.rev_compile)
+        compile_rule.register_compile(
+            'BNUMBER',
+            'genfiles/bnumber',
+            ['genfiles/fnumber'],
+            self.rev_compile,
+            non_input_deps=['genfiles/i_letter_a'])
 
         # For testing the num-variables code, and crazy maybe_symlink_to.
-        compile_rule.register_compile('I3',
-                                      'genfiles/i_number_3',
-                                      ['number3'],
-                                      self.rev_compile,
-                                      maybe_symlink_to='genfiles/bletter')
+        compile_rule.register_compile(
+            'I3',
+            'genfiles/i_number_3',
+            ['number3'],
+            self.rev_compile,
+            maybe_symlink_to='genfiles/bletter')
 
         # Something that uses two variables
-        compile_rule.register_compile('BOTH',
-                                      'genfiles/both_{letter}_{number}',
-                                      ['{letter}{number}'],
-                                      CopyWithVarCompile(),
-                                      maybe_symlink_to='{letter}{number}')
+        compile_rule.register_compile(
+            'BOTH',
+            'genfiles/both_{letter}_{number}',
+            ['{letter}{number}'],
+            CopyWithVarCompile(),
+            maybe_symlink_to='{letter}{number}')
 
         # Something that uses a user's context
-        compile_rule.register_compile('CONTEXT',
-                                      'genfiles/context_content_{number}',
-                                      [],
-                                      self.write_context)
+        compile_rule.register_compile(
+            'CONTEXT',
+            'genfiles/context_content_{number}',
+            [],
+            self.write_context)
 
         # Testing {var} vs {{var}}
-        compile_rule.register_compile('DOUBLE-BRACE',
-                                      'genfiles/path/{{path}}.js',
-                                      ['{{path}}2'],
-                                      self.rev_compile)
-        compile_rule.register_compile('SINGLE-BRACE',
-                                      'genfiles/dir/{path}.js',
-                                      ['{path}2'],
-                                      self.rev_compile)
+        compile_rule.register_compile(
+            'DOUBLE-BRACE',
+            'genfiles/path/{{path}}.js',
+            ['{{path}}2'],
+            self.rev_compile)
+        compile_rule.register_compile(
+            'SINGLE-BRACE',
+            'genfiles/dir/{path}.js',
+            ['{path}2'],
+            self.rev_compile)
 
         # Testing building a lot of files at the same level.
         # We want to test build_many() and split_files()
-        compile_rule.register_compile('BASED_ON_FILENAME (MANY)',
-                                      'genfiles/filename_content.m.{content}',
-                                      [],
-                                      WriteBasedOnFilenameMany())
-        compile_rule.register_compile('BASED_ON_FILENAME (SPLIT_OUTPUTS)',
-                                      'genfiles/filename_content.s.{content}',
-                                      [],
-                                      WriteBasedOnFilenameSplit())
-        compile_rule.register_compile('200 FILES (BUILD_MANY)',
-                                      'genfiles/200files.build_many',
-                                      ['genfiles/filename_content.m.%d' % i
-                                       for i in xrange(200)],
-                                      self.copy_compile)
-        compile_rule.register_compile('200 FILES (SPLIT_OUTPUTS)',
-                                      'genfiles/200files.split_outputs',
-                                      ['genfiles/filename_content.s.%d' % i
-                                       for i in xrange(200)],
-                                      self.copy_compile)
+        compile_rule.register_compile(
+            'BASED_ON_FILENAME (MANY)',
+            'genfiles/filename_content.m.{content}',
+            [],
+            WriteBasedOnFilenameMany())
+        compile_rule.register_compile(
+            'BASED_ON_FILENAME (SPLIT_OUTPUTS)',
+            'genfiles/filename_content.s.{content}',
+            [],
+            WriteBasedOnFilenameSplit())
+        compile_rule.register_compile(
+            '200 FILES (BUILD_MANY)',
+            'genfiles/200files.build_many',
+            ['genfiles/filename_content.m.%d' % i
+             for i in range(200)],
+            self.copy_compile)
+        compile_rule.register_compile(
+            '200 FILES (SPLIT_OUTPUTS)',
+            'genfiles/200files.split_outputs',
+            ['genfiles/filename_content.s.%d' % i
+             for i in range(200)],
+            self.copy_compile)
 
     def tearDown(self):
         super(TestBase, self).tearDown()
@@ -277,176 +298,215 @@ class TestBase(testutil.KakeTestBase):
 
 class TestCompileRule(TestBase):
     def test_find_compile_rule(self):
-        cr = compile_rule.find_compile_rule('genfiles/i_letter_a')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/i_letter_a')
         self.assertEqual('genfiles/i_letter_{letter}', cr.output_pattern)
         cr = compile_rule.find_compile_rule('genfiles/fmost')
         self.assertEqual('genfiles/fmost', cr.output_pattern)
 
     def test_find_compile_rule_prefers_longer_extensions(self):
         # Something that uses one vs two vs three extensions
-        compile_rule.register_compile('ONE DOT',
-                                      'genfiles/subdir/{{path}}.2',
-                                      ['{{path}}2'],
-                                      self.copy_compile)
-        compile_rule.register_compile('TWO DOTS',
-                                      'genfiles/{{path}}.copy.2',
-                                      ['{{path}}2'],
-                                      self.rev_compile)
-        compile_rule.register_compile('TWO DOTS NO VARS',
-                                      'genfiles/most_specific.copy.2',
-                                      ['most_specific2'],
-                                      self.rev_compile)
+        compile_rule.register_compile(
+            'ONE DOT',
+            'genfiles/subdir/{{path}}.2',
+            ['{{path}}2'],
+            self.copy_compile)
+        compile_rule.register_compile(
+            'TWO DOTS',
+            'genfiles/{{path}}.copy.2',
+            ['{{path}}2'],
+            self.rev_compile)
+        compile_rule.register_compile(
+            'TWO DOTS NO VARS',
+            'genfiles/most_specific.copy.2',
+            ['most_specific2'],
+            self.rev_compile)
 
-        cr = compile_rule.find_compile_rule('genfiles/subdir/make_a.copy.2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/subdir/make_a.copy.2')
         self.assertEqual('genfiles/{{path}}.copy.2', cr.output_pattern)
-        cr = compile_rule.find_compile_rule('genfiles/subdir/make_a.dupe.2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/subdir/make_a.dupe.2')
         self.assertEqual('genfiles/subdir/{{path}}.2', cr.output_pattern)
-        cr = compile_rule.find_compile_rule('genfiles/most_specific.copy.2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/most_specific.copy.2')
         self.assertEqual('genfiles/most_specific.copy.2', cr.output_pattern)
 
     def test_find_compile_rule_prefers_more_directory_parts(self):
         # Something that uses two vs three directory parts
-        compile_rule.register_compile('TWO DIRS',
-                                      'genfiles/{{path}}_copy_2',
-                                      ['{{path}}2'],
-                                      self.copy_compile)
-        compile_rule.register_compile('THREE DIRS',
-                                      'genfiles/subdir/{{path}}_copy_2',
-                                      ['genfiles/subdir/{{path}}2'],
-                                      self.rev_compile)
+        compile_rule.register_compile(
+            'TWO DIRS',
+            'genfiles/{{path}}_copy_2',
+            ['{{path}}2'],
+            self.copy_compile)
+        compile_rule.register_compile(
+            'THREE DIRS',
+            'genfiles/subdir/{{path}}_copy_2',
+            ['genfiles/subdir/{{path}}2'],
+            self.rev_compile)
 
-        cr = compile_rule.find_compile_rule('genfiles/make_a_copy_2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/make_a_copy_2')
         self.assertEqual('genfiles/{{path}}_copy_2', cr.output_pattern)
-        cr = compile_rule.find_compile_rule('genfiles/whatever/make_a_copy_2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/whatever/make_a_copy_2')
         self.assertEqual('genfiles/{{path}}_copy_2', cr.output_pattern)
-        cr = compile_rule.find_compile_rule('genfiles/subdir/make_a_copy_2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/subdir/make_a_copy_2')
         self.assertEqual('genfiles/subdir/{{path}}_copy_2', cr.output_pattern)
 
     def test_find_compile_rule_prefers_fewer_vars(self):
-        cr = compile_rule.find_compile_rule('genfiles/i_number_1')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/i_number_1')
         self.assertEqual('genfiles/i_number_{number}', cr.output_pattern)
-        cr = compile_rule.find_compile_rule('genfiles/i_number_2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/i_number_2')
         self.assertEqual('genfiles/i_number_{number}', cr.output_pattern)
-        cr = compile_rule.find_compile_rule('genfiles/i_number_3')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/i_number_3')
         self.assertEqual('genfiles/i_number_3', cr.output_pattern)
         cr = compile_rule.find_compile_rule('genfiles/both_a_1')
         self.assertEqual('genfiles/both_{letter}_{number}', cr.output_pattern)
 
     def test_labels_must_be_unique(self):
-        compile_rule.register_compile('NON-UNIQUE LABEL',
-                                      'genfiles/{{path}}_copy_2',
-                                      ['{{path}}2'],
-                                      self.copy_compile)
+        compile_rule.register_compile(
+            'NON-UNIQUE LABEL',
+            'genfiles/{{path}}_copy_2',
+            ['{{path}}2'],
+            self.copy_compile)
         with self.assertRaises(AssertionError):
-            compile_rule.register_compile('NON-UNIQUE LABEL',
-                                          'genfiles/subdir/{{path}}_copy_2',
-                                          ['genfiles/subdir/{{path}}2'],
-                                          self.rev_compile)
+            compile_rule.register_compile(
+                'NON-UNIQUE LABEL',
+                'genfiles/subdir/{{path}}_copy_2',
+                ['genfiles/subdir/{{path}}2'],
+                self.rev_compile)
 
     def test_matches(self):
-        cr = compile_rule.find_compile_rule('genfiles/i_number_1')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/i_number_1')
         self.assertTrue(cr.matches('genfiles/i_number_1'))
         self.assertTrue(cr.matches('genfiles/i_number_2'))
         self.assertTrue(cr.matches('genfiles/i_number_1000'))
         self.assertFalse(cr.matches('genfiles/i_letter_1'))
         self.assertFalse(cr.matches('genfiles/i_letter_a'))
 
-        cr = compile_rule.find_compile_rule('genfiles/both_number_1')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/both_number_1')
         self.assertTrue(cr.matches('genfiles/both_number_1'))
         self.assertTrue(cr.matches('genfiles/both_number_2'))
         self.assertTrue(cr.matches('genfiles/both_whatever_2'))
         self.assertFalse(cr.matches('genfiles/both_whatever'))
 
     def test_single_brace(self):
-        cr = compile_rule.find_compile_rule('genfiles/path/foo.js')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/path/foo.js')
         self.assertNotEqual(None, cr)
-        cr = compile_rule.find_compile_rule('genfiles/path/subpath/foo.js')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/path/subpath/foo.js')
         self.assertNotEqual(None, cr)
-        cr = compile_rule.find_compile_rule('genfiles/dir/bar.js')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/dir/bar.js')
         self.assertNotEqual(None, cr)
-        cr = compile_rule.find_compile_rule('genfiles/dir/subdir/bar.js')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/dir/subdir/bar.js')
         self.assertEqual(None, cr)
 
     def test_var_with_underscore(self):
         # Testing {var_with_underscore}
-        compile_rule.register_compile('VAR WITH UNDERSCORE',
-                                      'genfiles/us/{var_with_underscore}.js',
-                                      ['{var_with_underscore}2'],
-                                      self.rev_compile)
+        compile_rule.register_compile(
+            'VAR WITH UNDERSCORE',
+            'genfiles/us/{var_with_underscore}.js',
+            ['{var_with_underscore}2'],
+            self.rev_compile)
 
-        cr = compile_rule.find_compile_rule('genfiles/us/foo.js')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/us/foo.js')
         self.assertNotEqual(None, cr)
         self.assertEqual({'{var_with_underscore}': 'foo'},
                          cr.var_values('genfiles/us/foo.js'))
 
     def test_var_values(self):
-        cr = compile_rule.find_compile_rule('genfiles/i_number_1')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/i_number_1')
         self.assertEqual({'{number}': '1'},
                          cr.var_values('genfiles/i_number_1'))
-        cr = compile_rule.find_compile_rule('genfiles/i_number_2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/i_number_2')
         self.assertEqual({'{number}': '2'},
                          cr.var_values('genfiles/i_number_2'))
-        cr = compile_rule.find_compile_rule('genfiles/i_number_3')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/i_number_3')
         self.assertEqual({}, cr.var_values('genfiles/i_number_3'))
         cr = compile_rule.find_compile_rule('genfiles/both_a_1')
         self.assertEqual({'{number}': '1', '{letter}': 'a'},
                          cr.var_values('genfiles/both_a_1'))
 
-        cr = compile_rule.find_compile_rule('genfiles/path/subpath/foo.js')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/path/subpath/foo.js')
         self.assertEqual({'{{path}}': 'subpath/foo'},
                          cr.var_values('genfiles/path/subpath/foo.js'))
-        cr = compile_rule.find_compile_rule('genfiles/dir/bar.js')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/dir/bar.js')
         self.assertEqual({'{path}': 'bar'},
                          cr.var_values('genfiles/dir/bar.js'))
 
     def test_input_files(self):
-        cr = compile_rule.find_compile_rule('genfiles/i_number_1')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/i_number_1')
         self.assertEqual(['a1', 'b1'], cr.input_files('genfiles/i_number_1'))
-        cr = compile_rule.find_compile_rule('genfiles/i_number_2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/i_number_2')
         self.assertEqual(['a2', 'b2'], cr.input_files('genfiles/i_number_2'))
-        cr = compile_rule.find_compile_rule('genfiles/i_number_3')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/i_number_3')
         self.assertEqual(['number3'], cr.input_files('genfiles/i_number_3'))
         cr = compile_rule.find_compile_rule('genfiles/both_a_1')
         self.assertEqual(['a1'], cr.input_files('genfiles/both_a_1'))
 
     def test_input_globs(self):
         # This will match a1, a2, b1, b2
-        compile_rule.register_compile('BOTH GLOB',
-                                      'genfiles/both_glob',
-                                      ['??'],
-                                      self.copy_compile)
+        compile_rule.register_compile(
+            'BOTH GLOB',
+            'genfiles/both_glob',
+            ['??'],
+            self.copy_compile)
 
-        cr = compile_rule.find_compile_rule('genfiles/both_glob')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/both_glob')
         self.assertEqual(['a1', 'a2', 'b1', 'b2'],
                          cr.input_files('genfiles/both_glob'))
 
     def test_outfile_must_live_in_genfiles(self):
         with self.assertRaises(AssertionError):
-            compile_rule.register_compile('NOT GENFILES GLOB',
-                                          'not_genfiles/genfiles_glob',
-                                          ['genfiles/*'],
-                                          CopyCompile())
+            compile_rule.register_compile(
+                'NOT GENFILES GLOB',
+                'not_genfiles/genfiles_glob',
+                ['genfiles/*'],
+                CopyCompile())
 
     def test_cannot_glob_over_generated_files(self):
         with self.assertRaises(AssertionError):
-            compile_rule.register_compile('GENFILES GLOB',
-                                          'genfiles/genfiles_glob',
-                                          ['genfiles/*'],
-                                          CopyCompile())
+            compile_rule.register_compile(
+                'GENFILES GLOB',
+                'genfiles/genfiles_glob',
+                ['genfiles/*'],
+                CopyCompile())
 
     def test_maybe_symlink_to(self):
         cr = compile_rule.find_compile_rule('genfiles/both_a_1')
         self.assertEqual('a1', cr.maybe_symlink_to('genfiles/both_a_1'))
 
-        cr = compile_rule.find_compile_rule('genfiles/i_number_2')
+        cr = compile_rule.find_compile_rule(
+            'genfiles/i_number_2')
         self.assertEqual(None, cr.maybe_symlink_to('genfiles/i_number_2'))
 
     def test_compute_crc(self):
-        compile_rule.register_compile('COMPUTE CRC',
-                                      'genfiles/has_crc',
-                                      ['??'],
-                                      self.copy_compile,
-                                      compute_crc=True)
+        compile_rule.register_compile(
+            'COMPUTE CRC',
+            'genfiles/has_crc',
+            ['??'],
+            self.copy_compile,
+            compute_crc=True)
 
         cr = compile_rule.find_compile_rule('genfiles/has_crc')
         self.assertTrue(cr.compute_crc)
@@ -455,12 +515,14 @@ class TestCompileRule(TestBase):
         self.assertFalse(cr.compute_crc)
 
     def test_trumped_by(self):
-        compile_rule.register_compile('TRUMPED_BY',
-                                      'genfiles/{{path}}.dot.js',
-                                      ['??'],
-                                      self.copy_compile,
-                                      trumped_by=['DOUBLE-BRACE'])
-        cr = compile_rule.find_compile_rule('genfiles/path/foo.dot.js')
+        compile_rule.register_compile(
+            'TRUMPED_BY',
+            'genfiles/{{path}}.dot.js',
+            ['??'],
+            self.copy_compile,
+            trumped_by=['DOUBLE-BRACE'])
+        cr = compile_rule.find_compile_rule(
+            'genfiles/path/foo.dot.js')
         self.assertEqual('DOUBLE-BRACE', cr.label)
 
 
@@ -608,14 +670,16 @@ class TestDependencyGraph(TestBase):
 
     def test_circular_dep(self):
         # testing circular deps
-        compile_rule.register_compile('CIRCULAR 1',
-                                      'genfiles/circular1',
-                                      ['genfiles/circular2'],
-                                      self.copy_compile)
-        compile_rule.register_compile('CIRCULAR 2',
-                                      'genfiles/circular2',
-                                      ['genfiles/circular1'],
-                                      self.copy_compile)
+        compile_rule.register_compile(
+            'CIRCULAR 1',
+            'genfiles/circular1',
+            ['genfiles/circular2'],
+            self.copy_compile)
+        compile_rule.register_compile(
+            'CIRCULAR 2',
+            'genfiles/circular2',
+            ['genfiles/circular1'],
+            self.copy_compile)
 
         graph = build.DependencyGraph()
         with self.assertRaises(build.CompileFailure):
@@ -722,7 +786,7 @@ class TestBuild(TestBase):
 
         def new_build(cls, output_filename, input_filenames, _, context):
             with open(CopyCompile.abspath(output_filename), 'w') as fout:
-                print >>fout, 'Version 2 baybee!'
+                fout.write('Version 2 baybee!' + "\n")
 
         old_build = CopyCompile._build
         old_version = CopyCompile.version
@@ -781,11 +845,11 @@ class TestBuild(TestBase):
         # By having genfiles/bnumber be a trigger-file to compute the
         # inputs to bnumber.rev, we force bnumber to be immediate-built.
         # This should also cause us to build its non-input dep, i_letter_a.
-        compile_rule.register_compile('IMMEDIATE',
-                                      'genfiles/i_number_2.rev',
-                                      ComputedInput(self,
-                                                    ['genfiles/bnumber']),
-                                      self.rev_compile)
+        compile_rule.register_compile(
+            'IMMEDIATE',
+            'genfiles/i_number_2.rev',
+            ComputedInput(self, ['genfiles/bnumber']),
+            self.rev_compile)
         _build('genfiles/i_number_2.rev')
         # This should also have built i_number_2, which is what the
         # ComputedInput returns.
@@ -794,14 +858,16 @@ class TestBuild(TestBase):
 
         # Make sure that immediate builds can also raise an exception when
         # these is no matching rule
-        compile_rule.register_compile('IMMEDIATE2',
-                                      'genfiles/not_a_real_file.bmp',
-                                      ComputedInput(
-                                          self,
-                                          ['genfiles/not_real_either']),
-                                      self.rev_compile)
+        compile_rule.register_compile(
+            'IMMEDIATE2',
+            'genfiles/not_a_real_file.bmp',
+            ComputedInput(
+                self,
+                ['genfiles/not_real_either']),
+            self.rev_compile)
 
-        with self.assertRaises(compile_rule.NoBuildRuleCompileFailure):
+        with self.assertRaises(
+                compile_rule.NoBuildRuleCompileFailure):
             _build('genfiles/not_a_real_file.bmp')
 
     def test_force_recomputes_inputs(self):
@@ -819,10 +885,11 @@ class TestBuild(TestBase):
 
         computed_input = ComputedInput(['a1'])
 
-        compile_rule.register_compile('IMMEDIATE',
-                                      'genfiles/i_number_2.rev',
-                                      computed_input,
-                                      self.copy_compile)
+        compile_rule.register_compile(
+            'IMMEDIATE',
+            'genfiles/i_number_2.rev',
+            computed_input,
+            self.copy_compile)
 
         # We should be calling build twice, once for i_number_2.rev and once
         # for the input 'genfiles/i_number_2'
@@ -862,11 +929,12 @@ class TestBuild(TestBase):
         self.assertFile('genfiles/context_content_2', 'world\n')
 
     def test_maybe_symlink_to(self):
-        compile_rule.register_compile('SYMLINK',
-                                      'genfiles/bletter_symlink',
-                                      ['genfiles/fletter'],
-                                      self.rev_compile,
-                                      maybe_symlink_to='genfiles/bletter')
+        compile_rule.register_compile(
+            'SYMLINK',
+            'genfiles/bletter_symlink',
+            ['genfiles/fletter'],
+            self.rev_compile,
+            maybe_symlink_to='genfiles/bletter')
 
         _build('genfiles/bletter_symlink')
         self.assertTrue(
@@ -930,10 +998,11 @@ class TestBuild(TestBase):
                         'a1: line 1\na1: line 2\na2: line 1\na2: line 2\n')
 
     def test_we_die_if_buildmany_fails_but_not_during_binary_search(self):
-        compile_rule.register_compile('FAIL',
-                                      'genfiles/fail*',
-                                      ['a1'],
-                                      FailToBuild())
+        compile_rule.register_compile(
+            'FAIL',
+            'genfiles/fail*',
+            ['a1'],
+            FailToBuild())
         with self.assertRaises(Exception):
             _build_many([('genfiles/fail1', {}),
                          ('genfiles/fail2', {}),
@@ -942,10 +1011,11 @@ class TestBuild(TestBase):
 
     def test_input_map(self):
         # Something that uses a 'system var' in the context.
-        compile_rule.register_compile('INPUT MAP',
-                                      'genfiles/input_map',
-                                      [],
-                                      WriteContextInputMap())
+        compile_rule.register_compile(
+            'INPUT MAP',
+            'genfiles/input_map',
+            [],
+            WriteContextInputMap())
 
         _build_many([('genfiles/input_map', {}),
                      ('genfiles/fletter', {})])
@@ -978,14 +1048,14 @@ class TestBuild(TestBase):
     def test_checkpointing(self):
         # We do one sync after every 'stage', which for bletter is 3.
         # And then one sync at the end.
-        with self.assertCalled(kake.filemod_db.sync, 4):
+        with self.assertCalled(filemod_db.sync, 4):
             _build('genfiles/bletter', {}, checkpoint_interval=0)
 
     def test_slow_checkpointing(self):
         # The whole build takes less than 100 seconds, so we don't do
         # any checkpoint syncs (except for the standard one at the
         # end of the build).
-        with self.assertCalled(kake.filemod_db.sync, 1):
+        with self.assertCalled(filemod_db.sync, 1):
             _build('genfiles/bletter', {}, checkpoint_interval=100)
 
     @unittest.skip("Test seems flaky")
@@ -1001,8 +1071,60 @@ class TestBuild(TestBase):
             resource.setrlimit(resource.RLIMIT_NOFILE, orig_limits)
 
     def test_no_rule(self):
-        with self.assertRaises(compile_rule.NoBuildRuleCompileFailure):
+        with self.assertRaises(
+                compile_rule.NoBuildRuleCompileFailure):
             _build("genfiles/there_is_no_rule_for_this_file")
+
+    def test_missing_input_file_buildmany(self):
+        os.unlink(self._abspath('a1'))
+        with mock.patch('kake.log.exception') as logger:
+            with self.assertRaises(IOError):
+                _build("genfiles/bletter")
+            self.assertEqual(
+                [mock.call('FATAL ERROR building %s (needed via %s)',
+                           'genfiles/i_letter_a',
+                           ('genfiles/bletter'
+                            ' -> genfiles/fletter'
+                            ' -> genfiles/i_letter_a'))],
+                logger.call_args_list)
+
+    def test_missing_input_file_build(self):
+        os.unlink(self._abspath('a1'))
+        with mock.patch('kake.log.exception') as logger:
+            with self.assertRaises(IOError):
+                _build("genfiles/both_a_1")
+            self.assertEqual(
+                [mock.call('FATAL ERROR building %s (needed via %s)',
+                           'genfiles/both_a_1',
+                           'genfiles/both_a_1')],
+                logger.call_args_list)
+
+    def test_missing_input_file_computed_input(self):
+        class ComputedInput(computed_inputs.ComputedInputsBase):
+            def input_patterns(self, outfile_name, context, triggers, changed):
+                return ['genfiles/i_number_2']
+
+        # By having genfiles/bnumber be a trigger-file to compute the
+        # inputs to bnumber.rev, we force bnumber to be immediate-built.
+        # This should also cause us to build its non-input dep, i_letter_a.
+        compile_rule.register_compile(
+            'MISSING FILES: IMMEDIATE',
+            'genfiles/i_number_2.rev',
+            ComputedInput(['genfiles/bletter']),
+            self.rev_compile)
+
+        os.unlink(self._abspath('a1'))
+        with mock.patch('kake.log.exception') as logger:
+            with self.assertRaises(IOError):
+                _build('genfiles/i_number_2.rev')
+            self.assertEqual(
+                [mock.call('FATAL ERROR building %s (needed via %s)',
+                           'genfiles/i_letter_a',
+                           ('genfiles/i_number_2.rev (via computed dep)'
+                            ' -> genfiles/bletter'
+                            ' -> genfiles/fletter'
+                            ' -> genfiles/i_letter_a'))],
+                logger.call_args_list)
 
 
 if __name__ == '__main__':

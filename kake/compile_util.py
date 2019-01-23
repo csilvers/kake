@@ -5,14 +5,15 @@ from __future__ import absolute_import
 try:
     import cPickle
 except ImportError:
-    import pickle      # python3
+    import pickle as cPickle  # python3
 import glob
 import os
 import re
 
+from . import project_root
+
 from . import filemod_db
 from . import log
-from . import project_root
 
 
 # We accept either {var} or {{var}}.
@@ -189,9 +190,10 @@ class CachedFile(object):
     This class makes sure (4) doesn't happen: the CachedFile object will
     notice the mismatch and update B's memory.
 
-    Note: this class uses filemod_db to determine if a file has
-    changed on disk or not, so be sure to keep the filemod_db mtime-
-    cache up to date if you use this class.
+    Note: this class uses filemod_db to determine if a
+    file has changed on disk or not, so be sure to keep the
+    filemod_db mtime- cache up to date if you use this class.
+
     """
     # This is used for tests, so we can clear all the caches easily.
     _ALL_CACHED_FILES = []
@@ -211,7 +213,8 @@ class CachedFile(object):
     def get(self):
         """Return the data structure that's backed by filename."""
         # Never bother with the CRC here: mtime is enough.
-        current_file_info = filemod_db.get_file_info(self._filename)
+        current_file_info = filemod_db.get_file_info(
+            self._filename)
         if self._filename_file_info != current_file_info:
             # Not up to date, need to reload from disk.
             log.v2('Re-reading cached data from %s', self._filename)
@@ -227,8 +230,9 @@ class CachedFile(object):
         with open(project_root.join(self._filename), 'wb') as f:
             cPickle.dump(self._data, f, cPickle.HIGHEST_PROTOCOL)
         # Make sure filemod-db knows about the new contents.
-        self._filename_file_info = filemod_db.get_file_info(self._filename,
-                                                            bust_cache=True)
+        self._filename_file_info = filemod_db.get_file_info(
+            self._filename,
+            bust_cache=True)
 
     def filename(self):
         return self._filename

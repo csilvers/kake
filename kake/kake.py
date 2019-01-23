@@ -166,7 +166,7 @@ def js_file_to_package_mapping(build_options):
 def perseus_mobile_js_files(build_options):
     # These files are served directly by /api/v1/ios/static_redirect.
     max_perseus_version = 10  # perseus-10.js  <-- for greppability
-    for version in xrange(0, max_perseus_version + 1):
+    for version in range(0, max_perseus_version + 1):
         for lang in build_options.langs:
             outfile = os.path.join('genfiles', 'compressed_javascript', lang,
                                    'genfiles', 'compiled_es6', lang,
@@ -494,10 +494,10 @@ def get_build_args(build_targets, context, build_options):
     # We can save a bit of memory by stringifying all the filenames
     # (which might be unicode).
     build_args = {memory_util.save_bytes(k): v
-                  for (k, v) in build_args.iteritems()}
+                  for (k, v) in build_args.items()}
 
     # Add the commandline-supplied context to all build targets.
-    for (_, build_rule_context) in build_args.iteritems():
+    for (_, build_rule_context) in build_args.items():
         build_rule_context.update(context)
 
     return build_args
@@ -511,7 +511,7 @@ def main(build_targets, langs, context={}, dev=False, readable=False,
     build_args = get_build_args(build_targets, context, build_options)
 
     if dry_run:
-        print '\n'.join(sorted('%s (%s)' % b for b in build_args.iteritems()))
+        print '\n'.join(sorted('%s (%s)' % b for b in build_args.items()))
         return
 
     kake.make.build_many(build_args.items(), num_processes, force,
