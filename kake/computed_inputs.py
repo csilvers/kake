@@ -337,7 +337,9 @@ class ComputedIncludeInputs(ComputedInputsBase):
             include_regexp_string: string for a regexp that finds the
               'include' lines in your input files, starting with
               base_file.  It should have exactly one group (thing in
-              parentheses) that returns the filename to include.  This
+              parentheses) that returns the filename to include.
+              (It can have multiple groups if you need, but for a
+              given input all should be empty except for one.)  This
               filename is *ALWAYS* taken to be relative to the input
               filename.
             other_inputs: additional files (actually, any file-
@@ -446,7 +448,9 @@ class ComputedIncludeInputs(ComputedInputsBase):
 
             retval = set()
             for m in self.include_regexp.finditer(contents):
-                newfile = m.group(1)
+                nonempty_matches = [s for s in m.groups() if s]
+                assert len(nonempty_matches) == 1, m.groups()
+                newfile = nonempty_matches[0]
                 abs_newfile = self.resolve_includee_path(abs_infile, newfile,
                                                          context)
                 retval.add(project_root.relpath(abs_newfile))

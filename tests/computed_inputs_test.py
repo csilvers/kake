@@ -606,6 +606,9 @@ class TestComputedIncludes(TestBase):
         with open(self._abspath('a.h'), 'w') as f:
             f.write('#include "includes/b.h"' + "\n")
 
+        with open(self._abspath('stdio.h'), 'w') as f:
+            f.write('' + "\n")
+
         with open(self._abspath(os.path.join('includes', 'b.h')), 'w') as f:
             f.write('#include "c.h"' + "\n")
 
@@ -645,6 +648,13 @@ class TestComputedIncludes(TestBase):
         compile_rule.register_compile(
             'II', 'genfiles/{{path}}.ii',
             self.includer, CopyCompile())
+
+        self.full_includer = (
+            computed_inputs.ComputedIncludeInputs(
+                '{{path}}.c', r'^#include\s+"(.*?)"|^#include\s+<(.*?)>'))
+        compile_rule.register_compile(
+            'FULLII', 'genfiles/{{path}}.fullii',
+            self.full_includer, CopyCompile())
 
         self.genfiles_includer = ComputedIncludeInputsSubclass(
             'genfiles/{{path}}.c', r'^#include\s+"(.*?)"')
@@ -910,6 +920,15 @@ class TestComputedIncludes(TestBase):
             ['commented.c',
              'includes/d.h'],
             list(nccr.input_trigger_files('genfiles/commented.ncii')))
+
+    def test_regexp_has_two_groups(self):
+        cr = compile_rule.find_compile_rule('genfiles/a.fullii')
+        self.assertEqual(['a.c',
+                          'a.h',
+                          'stdio.h',
+                          'includes/b.h',
+                          'includes/c.h'],
+                         list(cr.input_trigger_files('genfiles/a.fullii')))
 
 
 if __name__ == '__main__':
