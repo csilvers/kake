@@ -695,6 +695,110 @@ class TestDependencyGraph(TestBase):
         self.assertEqual(4, graph._get('genfiles/i_number_3').level)
         self.assertEqual(3, graph._get('genfiles/bletter').level)
 
+    def test_same_level_when_possible(self):
+        """Test that we compile same-rule files together when we possible."""
+        # a --> b --> b.rev --> all.rev
+        #  \--------> a.rev -/
+        compile_rule.register_compile('LOW_LEVEL_1',
+                                      'genfiles/ll/a',
+                                      ['a1'],
+                                      self.copy_compile)
+        compile_rule.register_compile('LOW_LEVEL_2',
+                                      'genfiles/ll/b',
+                                      ['genfiles/ll/a'],
+                                      self.copy_compile)
+        compile_rule.register_compile('LOW_LEVEL_3',
+                                      'genfiles/ll/{{file}}.rev',
+                                      ['genfiles/ll/{{file}}'],
+                                      self.rev_compile)
+        compile_rule.register_compile('LOW_LEVEL_4',
+                                      'genfiles/ll/all.rev',
+                                      ['genfiles/ll/a.rev',
+                                       'genfiles/ll/b.rev'],
+                                      self.copy_compile)
+
+        graph = build.DependencyGraph()
+        self._add_to_dependency_graph('genfiles/ll/all.rev', graph)
+        self.assertEqual(graph._get('genfiles/ll/a.rev').level,
+                         graph._get('genfiles/ll/b.rev').level)
+
+        # a --> a.rev --> a.revcp --> all.rev
+        # b --> b.rev -------------/
+        compile_rule.register_compile('HIGH_LEVEL_1',
+                                      'genfiles/hl/a',
+                                      ['a1'],
+                                      self.copy_compile)
+        compile_rule.register_compile('HIGH_LEVEL_2',
+                                      'genfiles/hl/b',
+                                      ['a2'],
+                                      self.copy_compile)
+        compile_rule.register_compile('HIGH_LEVEL_3',
+                                      'genfiles/hl/{{file}}.rev',
+                                      ['genfiles/hl/{{file}}'],
+                                      self.rev_compile)
+        compile_rule.register_compile('HIGH_LEVEL_4',
+                                      'genfiles/hl/{{file}}.revcp',
+                                      ['genfiles/hl/{{file}}.rev'],
+                                      self.copy_compile)
+        compile_rule.register_compile('HIGH_LEVEL_5',
+                                      'genfiles/hl/all.rev',
+                                      ['genfiles/hl/a.revcp',
+                                       'genfiles/hl/b.rev'],
+                                      self.copy_compile)
+
+        graph = build.DependencyGraph()
+        self._add_to_dependency_graph('genfiles/hl/all.rev', graph)
+        self.assertEqual(graph._get('genfiles/hl/a.rev').level,
+                         graph._get('genfiles/hl/b.rev').level)
+
+    def test_not_same_level_when_impossible(self):
+        # We don't insert a 'noop' just to get a.rev and bcp.rev
+        # compiling together, since that would bump all.rev's level up.
+
+        # a --> a.rev --> a.revcp --> all.rev
+        # b --> bcp ----> bcp.rev -/
+        compile_rule.register_compile('MID_LEVEL_1',
+                                      'genfiles/ml/a',
+                                      ['a1'],
+                                      self.copy_compile)
+        compile_rule.register_compile('MID_LEVEL_2',
+                                      'genfiles/ml/b',
+                                      ['a2'],
+                                      self.copy_compile)
+        compile_rule.register_compile('MID_LEVEL_3',
+                                      'genfiles/ml/{{file}}.rev',
+                                      ['genfiles/ml/{{file}}'],
+                                      self.rev_compile)
+        compile_rule.register_compile('MID_LEVEL_4',
+                                      'genfiles/ml/{{file}}.revcp',
+                                      ['genfiles/ml/{{file}}.rev'],
+                                      self.copy_compile)
+        compile_rule.register_compile('MID_LEVEL_5',
+                                      'genfiles/ml/bcp',
+                                      ['genfiles/ml/b'],
+                                      self.copy_compile)
+        compile_rule.register_compile('MID_LEVEL_6',
+                                      'genfiles/ml/all.rev',
+                                      ['genfiles/ml/a.revcp',
+                                       'genfiles/ml/bcp.rev'],
+                                      self.copy_compile)
+        compile_rule.register_compile('MID_LEVEL_7',
+                                      'genfiles/ml/bcp.normal',
+                                      ['genfiles/ml/bcp.rev.rev'],
+                                      self.copy_compile)
+
+        graph = build.DependencyGraph()
+        self._add_to_dependency_graph('genfiles/ml/all.rev', graph)
+        self.assertEqual(2, graph._get('genfiles/ml/a.rev').level)
+        self.assertEqual(3, graph._get('genfiles/ml/bcp.rev').level)
+
+        # bcp.rev and bcp.rev.rev can't be at the same level, because
+        # the second file depends on the first.
+        graph = build.DependencyGraph()
+        self._add_to_dependency_graph('genfiles/ml/bcp.normal', graph)
+        self.assertNotEqual(graph._get('genfiles/ml/bcp.rev').level,
+                            graph._get('genfiles/ml/bcp.rev.rev').level)
+
 
 class TestDependencyChunking(TestBase):
     def test_complex(self):
